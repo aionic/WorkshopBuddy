@@ -55,8 +55,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="mt-auto p-4 text-[11px] text-slate-500">
-          Demo build • AI-drafted content requires human review.
+        <div className="mt-auto p-4 space-y-3">
+          <div className="flex items-center justify-center">
+            <Image
+              src="/microsoft-logo.svg"
+              alt="Microsoft"
+              width={108}
+              height={23}
+              className="opacity-80"
+            />
+          </div>
+          <div className="text-[11px] text-slate-500 text-center">
+            Demo build • AI-drafted content requires human review.
+          </div>
         </div>
       </aside>
 
