@@ -1,0 +1,57 @@
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+.turbo/
+.cache/
+
+# --- env files (project-specific config; keep .env.example only) ---
+.env
+.env.local
+.env.*.local
+
+# --- build / deploy logs ---
+*.log
+deploy-output.log
+deploy-out*.log
+deploy_output*.log
+build.log
+ch*-acr-log.txt
+ch*-logs.txt
+ch*-logs-*.txt
+acr-fail-log.txt
+
+# --- local databases / data ---
+data/*.db
+data/*.db-journal
+*.sqlite
+*.sqlite-journal
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# --- Stash dirs we use during az acr build on Windows ---
+node_modules.acrhidden/
+**/node_modules.acrhidden/
+
+# --- Prisma generated artifacts (re-generated on install) ---
+**/prisma/.prisma/
+
+# Local log captures
+log-archive/
+innovate-impact/log-archive/
+
+# --- Local diagnostic artifacts (ad-hoc captures from PowerShell sessions) ---
+clogs*.txt
+acrlogs*.txt
+acrrun*.json
+cacherule*.json
+agentrun*.json
+latestrun*.json
+log.json

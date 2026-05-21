@@ -1,0 +1,89 @@
+// Workshop Buddy - Prisma schema
+generator client {
+  provider        = "prisma-client-js"
+  // driverAdapters lets us plug in @prisma/adapter-pg, which is required
+  // to authenticate against Azure Database for PostgreSQL Flexible Server
+  // using a Microsoft Entra access token (the token is refreshed on each
+  // new pool connection via @azure/identity).
+  previewFeatures = ["driverAdapters"]
+}
+
+datasource db {
+  // Azure Database for PostgreSQL Flexible Server with Entra-only auth.
+  // DATABASE_URL example:
+  //   postgresql://workshopbuddy-uami@pg-workshopbuddy-eus.postgres.database.azure.com:5432/workshopbuddy?sslmode=require
+  // The runtime password is an Entra access token fetched at startup
+  // (and on every new pool connection) via @azure/identity.
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Project {
+  id                String          @id @default(cuid())
+  name              String
+  clientName        String?
+  industry          String?
+  businessProblem   String
+  desiredOutcomes   String          @default("[]")
+  targetAudience    String          @default("[]")
+  selectedArtifacts String          @default("[]")
+  timeHorizon       String?
+  status            String          @default("Draft")
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  inputs            WorkshopInput[]
+  agentRuns         AgentRun[]
+  artifacts         Artifact[]
+}
+
+model WorkshopInput {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category    String
+  persona     String?
+  priority    String   @default("Medium")
+  content     String
+  submittedBy String?
+  votes       Int      @default(0)
+  createdAt   DateTime @default(now())
+}
+
+model AgentRun {
+  id          String    @id @default(cuid())
+  projectId   String
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  status      String    @default("Queued")
+  inputJson   String
+  outputJson  String?
+  logJson     String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+}
+
+model Artifact {
+  id             String            @id @default(cuid())
+  projectId      String
+  project        Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  artifactType   String
+  title          String
+  status         String            @default("Draft")
+  currentVersion Int               @default(1)
+  contentJson    String
+  markdown       String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  versions       ArtifactVersion[]
+}
+
+model ArtifactVersion {
+  id          String   @id @default(cuid())
+  artifactId  String
+  artifact    Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
+  version     Int
+  contentJson String
+  markdown    String?
+  notes       String?
+  createdAt   DateTime @default(now())
+}

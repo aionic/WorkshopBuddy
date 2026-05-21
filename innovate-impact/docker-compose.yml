@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    image: innovate-impact:local
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=file:/app/data/innovateimpact.db
+      - AI_PROVIDER=${AI_PROVIDER:-}
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT:-}
+      - AZURE_OPENAI_API_KEY=${AZURE_OPENAI_API_KEY:-}
+      - AZURE_OPENAI_DEPLOYMENT=${AZURE_OPENAI_DEPLOYMENT:-}
+      - AZURE_OPENAI_API_VERSION=${AZURE_OPENAI_API_VERSION:-2024-08-01-preview}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - DEMO_MODE=true
+    volumes:
+      - innovate_data:/app/data
+
+volumes:
+  innovate_data:
