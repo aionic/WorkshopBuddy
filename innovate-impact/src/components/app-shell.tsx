@@ -60,7 +60,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <Image
               src="/microsoft-logo.svg"
               alt="Microsoft"
-              width={108}
+              width={119}
               height={23}
               className="opacity-80"
             />

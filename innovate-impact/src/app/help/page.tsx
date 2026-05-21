@@ -1,3 +1,4 @@
+import Image from "next/image";
 import { Card, CardHeader, Badge } from "@/components/ui";
 import {
   LayoutDashboard,
@@ -16,6 +17,16 @@ export const dynamic = "force-dynamic";
 export default function HelpPage() {
   return (
     <div className="space-y-6 max-w-4xl">
+      <div className="flex justify-center">
+        <Image
+          src="/workshop-buddy-logo.png"
+          alt="Workshop Buddy"
+          width={320}
+          height={320}
+          priority
+          className="rounded-2xl shadow-lg"
+        />
+      </div>
       <div>
         <h1 className="text-2xl font-bold text-white flex items-center gap-2">
           <HelpCircle className="w-6 h-6 text-accent" /> Help &amp; User Guide
