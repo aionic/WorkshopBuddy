@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="./public/workshop-buddy-logo.png" alt="Workshop Buddy" width="240" />
+<img src="./innovate-impact/public/workshop-buddy-logo.png" alt="Workshop Buddy" width="240" />
 
 # Workshop Buddy
 
@@ -21,7 +21,7 @@ This is the MVP demo build of Workshop Buddy. It is a single Next.js + TypeScrip
 - Next.js 14 (App Router) + React + TypeScript + Tailwind
 - Prisma ORM against **Azure Database for PostgreSQL Flexible Server** with Microsoft Entra-only authentication (`passwordAuth: Disabled`) via the `@prisma/adapter-pg` driver adapter and `@azure/identity` token refresh
 - AI provider abstraction supporting **Azure AI Foundry (gpt-5.4, Entra auth)**, **Azure OpenAI**, **OpenAI**, and a deterministic **demo fallback**
-- 11-agent orchestrator (Intake → Pain Points → Business Impact → Solution Concept → Architecture → KPIs → Roadmap → Executive Story → Packager → Application Spec → Review). Every agent has its own dedicated system prompt and JSON output schema — see [`agent-prompts.md`](./agent-prompts.md). The **Custom instructions** field on the Agent Workflow page is injected into every agent's user prompt for that run.
+- 11-agent orchestrator (Intake → Pain Points → Business Impact → Solution Concept → Architecture → KPIs → Roadmap → Executive Story → Packager → Application Spec → Review). Every agent has its own dedicated system prompt and JSON output schema — see [`agent-prompts.md`](./innovate-impact/agent-prompts.md). The **Custom instructions** field on the Agent Workflow page is injected into every agent's user prompt for that run.
 - Seven artifact outputs: **Impact Statement**, **Executive Briefing Deck**, **Solution Map**, **90-Day Execution Plan**, **Trends White Paper**, **KPI Framework**, and **Application Spec** — a developer-grade "vibe coding" brief (app type, tech stack, UI/UX principles, starter Copilot prompts, phased build plan) ready to paste into VS Code with GitHub Copilot. The Application Spec depends on the Solution Map, which is auto-included as a prerequisite when selected.
 - Artifact rendering for **Markdown**, **DOCX** (`docx`), and **PPTX** (`pptxgenjs`)
 - Polished AI-studio UX: dashboard, project intake wizard, workshop board, agent workflow canvas, artifact workspace with versioning and regeneration, and an in-app **Help** section
@@ -132,7 +132,7 @@ az account set --subscription <SUBSCRIPTION_ID>
 The script:
 
 1. Verifies `rgWorkshopBuddy` exists.
-2. Runs `az deployment group create` on [`infra/main.bicep`](infra/main.bicep) to bootstrap ACR, the Container Apps environment, the Postgres Flexible Server + `workshopbuddy` database, and the managed identity (the UAMI is added as a Postgres Entra admin via the Bicep `administrators` sub-resource).
+2. Runs `az deployment group create` on [`infra/main.bicep`](innovate-impact/infra/main.bicep) to bootstrap ACR, the Container Apps environment, the Postgres Flexible Server + `workshopbuddy` database, and the managed identity (the UAMI is added as a Postgres Entra admin via the Bicep `administrators` sub-resource).
 3. Builds & pushes the image with `az acr build` (no local Docker required).
 4. Re-deploys Bicep with the new image tag to provision/update the Container App.
 5. Ensures Postgres Entra admins via `az postgres flexible-server microsoft-entra-admin` (idempotent).
@@ -156,7 +156,7 @@ The script:
 
 ### Manual / advanced
 
-If you want to deploy with raw CLI commands instead of `deploy.ps1`, see [`infra/main.bicep`](infra/main.bicep) for all parameters. The container exposes `/api/health` for liveness / readiness probes.
+If you want to deploy with raw CLI commands instead of `deploy.ps1`, see [`infra/main.bicep`](innovate-impact/infra/main.bicep) for all parameters. The container exposes `/api/health` for liveness / readiness probes.
 
 ---
 
