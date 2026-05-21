@@ -19,7 +19,7 @@ export async function GET(_: Request, { params }: { params: { projectId: string 
 export async function PUT(req: Request, { params }: { params: { projectId: string } }) {
   const body = await req.json();
   const data: Record<string, unknown> = {};
-  for (const k of ["name", "clientName", "industry", "businessProblem", "timeHorizon", "status"]) {
+  for (const k of ["name", "clientName", "tpid", "msxOppId", "industry", "businessProblem", "timeHorizon", "status"]) {
     if (body[k] !== undefined) data[k] = body[k];
   }
   for (const k of ["desiredOutcomes", "targetAudience", "selectedArtifacts"]) {

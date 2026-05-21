@@ -20,6 +20,8 @@ export async function POST(req: Request) {
     data: {
       name: body.name,
       clientName: body.clientName ?? null,
+      tpid: body.tpid ?? null,
+      msxOppId: body.msxOppId ?? null,
       industry: body.industry ?? null,
       businessProblem: body.businessProblem,
       desiredOutcomes: JSON.stringify(body.desiredOutcomes ?? []),

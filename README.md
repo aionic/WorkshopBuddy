@@ -22,6 +22,7 @@ This is the MVP demo build of Workshop Buddy. It is a single Next.js + TypeScrip
 - Prisma ORM against **Azure Database for PostgreSQL Flexible Server** with Microsoft Entra-only authentication (`passwordAuth: Disabled`) via the `@prisma/adapter-pg` driver adapter and `@azure/identity` token refresh
 - AI provider abstraction supporting **Azure AI Foundry (gpt-5.4, Entra auth)**, **Azure OpenAI**, **OpenAI**, and a deterministic **demo fallback**
 - 11-agent orchestrator (Intake → Pain Points → Business Impact → Solution Concept → Architecture → KPIs → Roadmap → Executive Story → Packager → Application Spec → Review). Every agent has its own dedicated system prompt and JSON output schema — see [`agent-prompts.md`](./innovate-impact/agent-prompts.md). The **Custom instructions** field on the Agent Workflow page is injected into every agent's user prompt for that run.
+- **Transcript Intake Agent** (new): paste a Teams transcript or upload a `.docx` / `.pdf` / `.vtt` / `.srt` / `.txt` / `.md` discovery doc and the agent proposes up to 50 categorized, persona-tagged candidate cards with evidence quotes and confidence scores. Facilitators review, edit, and bulk-accept into the workshop board — nothing is written until approved. Falls back to a deterministic regex extractor when no AI provider is configured.
 - Seven artifact outputs: **Impact Statement**, **Executive Briefing Deck**, **Solution Map**, **90-Day Execution Plan**, **Trends White Paper**, **KPI Framework**, and **Application Spec** — a developer-grade "vibe coding" brief (app type, tech stack, UI/UX principles, starter Copilot prompts, phased build plan) ready to paste into VS Code with GitHub Copilot. The Application Spec depends on the Solution Map, which is auto-included as a prerequisite when selected.
 - Artifact rendering for **Markdown**, **DOCX** (`docx`), and **PPTX** (`pptxgenjs`)
 - Polished AI-studio UX: dashboard, project intake wizard, workshop board, agent workflow canvas, artifact workspace with versioning and regeneration, and an in-app **Help** section
@@ -160,6 +161,23 @@ If you want to deploy with raw CLI commands instead of `deploy.ps1`, see [`infra
 
 ---
 
+## 🎙️ Import from transcript
+
+Facilitators rarely have time to retype a 60-minute discovery call into workshop cards. The **Import from transcript** button on the Workshop Studio page accepts:
+
+- **Pasted text** (Teams / Zoom / Meet / notes) — minimum 60 characters.
+- **File upload** (10 MB max): `.txt`, `.md`, `.markdown`, `.vtt`, `.srt`, `.docx`, `.pdf`.
+
+The **Transcript Intake Agent** ([`innovate-impact/src/lib/agents/transcript-intake.ts`](innovate-impact/src/lib/agents/transcript-intake.ts)) parses the input (timestamps and speaker prefixes are stripped for captions), then asks the configured LLM to return up to **50** candidate cards — each with `category`, optional `persona`, `priority`, `content`, a short `evidence` quote pulled from the transcript, and a `confidence` score. Optional facilitator hints (e.g. *“audience is the CFO, lead with cost reduction”*) are appended to the prompt.
+
+The modal then shows a reviewable grid: filter by category, edit inline, drop bad rows, bulk-select, and commit. Selected cards are written via `POST /api/projects/[id]/inputs/batch` in a single Prisma transaction. Every extraction is logged to the new `TranscriptIngest` audit table (source, format, char length, cards proposed/accepted, LLM used, optional error) and each resulting `WorkshopInput` is linked back to its `transcriptIngestId` for provenance.
+
+When no AI provider is configured (`DEMO_MODE=true` or `AI_PROVIDER` unset) the agent transparently falls back to a deterministic regex-based extractor so demos work offline.
+
+A sample transcript is checked in at [`ConceptDocs/sample-transcript.md`](ConceptDocs/sample-transcript.md) for quick testing.
+
+---
+
 ## 🧩 Project structure
 
 ```text
@@ -176,6 +194,9 @@ src/
     ai/provider.ts                   # Provider abstraction (Foundry / Azure OpenAI / OpenAI / mock)
     agents/orchestrator.ts           # 11-agent workflow + artifact packager + Application Spec agent
     agents/agent-prompts.ts          # Per-agent system prompt + JSON schema (see agent-prompts.md)
+    agents/transcript-intake.ts      # Transcript Intake Agent (LLM + deterministic fallback)
+    transcripts/parse.ts             # Multi-format transcript parser (docx/pdf/vtt/srt/txt/md)
+    workshop-enums.ts                # Shared CATEGORIES / PERSONAS / PRIORITIES + type guards
     artifacts/                       # Markdown / DOCX / PPTX renderers + schemas
     prompts/                         # System and packager prompts (Markdown)
     db.ts utils.ts
@@ -201,6 +222,7 @@ infra/
 | 7-8 | Preview and edit Markdown | ✅ |
 | 9-10 | Download DOCX (docs) and PPTX (briefing deck) | ✅ |
 | 11 | Seeded OCR to GenAI demo project | ✅ |
+| 11a | Transcript ingest (paste + file upload, AI extraction, review & bulk-accept) | ✅ |
 | 12 | `npm run dev` | ✅ |
 | 13 | Docker build & run | ✅ |
 | 14 | README with local + ACA deployment | ✅ |

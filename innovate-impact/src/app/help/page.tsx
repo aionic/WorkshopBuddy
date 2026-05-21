@@ -81,7 +81,11 @@ export default function HelpPage() {
             <NavRef icon={Users} label="Workshop Studio" />. Add inputs as cards; each card has
             a category (pain point, opportunity, voice of customer, KPI target, etc.),
             optional persona, priority, and free-text content. Cards are editable in place,
-            voteable, and can be deleted.
+            voteable, and can be deleted. <strong>New:</strong> click{" "}
+            <em>Import from transcript</em> to paste a Teams transcript or upload a
+            .docx/.pdf/.vtt/.srt/.txt file. The Transcript Intake Agent will propose
+            categorized, persona-tagged candidate cards for you to review and accept in
+            bulk &mdash; nothing is written to the board until you approve.
           </li>
           <li>
             <strong>Pick artifacts &amp; run the workflow</strong> &mdash; on{" "}
@@ -218,6 +222,10 @@ export default function HelpPage() {
           </p>
         </div>
       </Card>
+
+      <div className="text-center text-xs text-slate-500 pt-2">
+        Workshop Buddy <span className="text-slate-400">v2.0.0</span>
+      </div>
     </div>
   );
 }

@@ -3,15 +3,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import { Card, CardHeader, Badge, Button, Select, Textarea, Label } from "@/components/ui";
-import { ThumbsUp, Trash2, Workflow, ArrowRight, Pencil, Check, X } from "lucide-react";
-
-const CATEGORIES = [
-  "Pain Point", "Business Outcome", "Process Bottleneck", "Customer Impact",
-  "Operational Impact", "Technical Constraint", "Solution Idea", "KPI / Metric",
-  "Risk / Dependency", "Cost of Inaction"
-];
-const PERSONAS = ["Operations", "IT", "Finance", "Compliance", "Customer Experience", "Sales", "Marketing", "Engineering", "Executive"];
-const PRIORITIES = ["Low", "Medium", "High", "Critical"];
+import { ThumbsUp, Trash2, Workflow, ArrowRight, Pencil, Check, X, Sparkles } from "lucide-react";
+import { CATEGORIES, PERSONAS, PRIORITIES } from "@/lib/workshop-enums";
+import { TranscriptImportModal } from "@/components/transcript-import-modal";
 
 type WorkshopInput = {
   id: string; category: string; persona: string | null; priority: string;
@@ -30,6 +24,8 @@ export function WorkshopBoard({ project }: { project: { id: string; name: string
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<EditDraft>({ category: "Pain Point", persona: "Operations", priority: "Medium", content: "" });
   const [savingEdit, setSavingEdit] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importToast, setImportToast] = useState<string | null>(null);
 
   const filtered = useMemo(() => filter === "All" ? inputs : inputs.filter((i) => i.category === filter), [inputs, filter]);
 
@@ -110,6 +106,21 @@ export function WorkshopBoard({ project }: { project: { id: string; name: string
           <Button><Workflow className="w-4 h-4" /> Continue to Agents <ArrowRight className="w-4 h-4" /></Button>
         </Link>
       </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-xs text-slate-400">
+          Tip: paste a Teams transcript or upload a discovery doc to auto-populate the board.
+        </p>
+        <Button variant="secondary" onClick={() => setImportOpen(true)}>
+          <Sparkles className="w-4 h-4" /> Import from transcript
+        </Button>
+      </div>
+
+      {importToast && (
+        <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 text-emerald-200 text-sm px-3 py-2">
+          {importToast}
+        </div>
+      )}
 
       <Card>
         <CardHeader title={project.name} subtitle="Project context" />
@@ -238,6 +249,27 @@ export function WorkshopBoard({ project }: { project: { id: string; name: string
           </div>
         </Card>
       </div>
+
+      <TranscriptImportModal
+        projectId={project.id}
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onCommitted={async (count) => {
+          setImportOpen(false);
+          setImportToast(`Added ${count} card${count === 1 ? "" : "s"} from transcript.`);
+          try {
+            const res = await fetch(`/api/projects/${project.id}/inputs`, { cache: "no-store" });
+            if (res.ok) {
+              const fresh = (await res.json()) as WorkshopInput[];
+              setInputs(fresh);
+            }
+          } catch {
+            // non-fatal — user can hit Refresh
+          }
+          router.refresh();
+          setTimeout(() => setImportToast(null), 6000);
+        }}
+      />
     </div>
   );
 }

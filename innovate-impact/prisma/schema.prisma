@@ -22,6 +22,10 @@ model Project {
   id                String          @id @default(cuid())
   name              String
   clientName        String?
+  /// Microsoft TPID (Top Parent ID) for the customer account. Optional.
+  tpid              String?
+  /// MSX (Microsoft Sales Experience) opportunity ID. Optional.
+  msxOppId          String?
   industry          String?
   businessProblem   String
   desiredOutcomes   String          @default("[]")
@@ -34,19 +38,44 @@ model Project {
   inputs            WorkshopInput[]
   agentRuns         AgentRun[]
   artifacts         Artifact[]
+  transcriptIngests TranscriptIngest[]
 }
 
 model WorkshopInput {
-  id          String   @id @default(cuid())
-  projectId   String
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  category    String
-  persona     String?
-  priority    String   @default("Medium")
-  content     String
-  submittedBy String?
-  votes       Int      @default(0)
-  createdAt   DateTime @default(now())
+  id                 String            @id @default(cuid())
+  projectId          String
+  project            Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category           String
+  persona            String?
+  priority           String            @default("Medium")
+  content            String
+  submittedBy        String?
+  votes              Int               @default(0)
+  createdAt          DateTime          @default(now())
+  /// Optional link back to the transcript ingestion that produced this row,
+  /// for traceability and future "revert / re-extract" flows.
+  transcriptIngestId String?
+  transcriptIngest   TranscriptIngest? @relation(fields: [transcriptIngestId], references: [id], onDelete: SetNull)
+}
+
+/// Audit row written every time a transcript is ingested for a project.
+/// Captures source metadata (no transcript content) plus how many cards were
+/// produced. Each WorkshopInput written from this ingest carries the FK back.
+model TranscriptIngest {
+  id            String          @id @default(cuid())
+  projectId     String
+  project       Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source        String          // "paste" | "upload"
+  filename      String?
+  format        String?         // txt | md | vtt | srt | docx | pdf
+  charLength    Int             @default(0)
+  cardsProposed Int             @default(0)
+  cardsAccepted Int             @default(0)
+  usedLLM       Boolean         @default(false)
+  llmError      String?
+  hints         String?
+  createdAt     DateTime        @default(now())
+  inputs        WorkshopInput[]
 }
 
 model AgentRun {

@@ -15,19 +15,42 @@ const ARTIFACT_OPTIONS = [
 
 const AUDIENCE_OPTIONS = ["CIO", "CTO", "CFO", "Operations Executive", "Chief Customer Officer", "Compliance"];
 
-export function ProjectIntakeWizard() {
+export type ProjectFormInitial = {
+  id?: string;
+  name?: string;
+  clientName?: string | null;
+  tpid?: string | null;
+  msxOppId?: string | null;
+  industry?: string | null;
+  businessProblem?: string;
+  desiredOutcomes?: string[];
+  targetAudience?: string[];
+  selectedArtifacts?: string[];
+  timeHorizon?: string | null;
+};
+
+type Props = {
+  mode?: "create" | "edit";
+  initial?: ProjectFormInitial;
+};
+
+export function ProjectIntakeWizard({ mode = "create", initial }: Props = {}) {
   const router = useRouter();
+  const isEdit = mode === "edit" && !!initial?.id;
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState({
-    name: "",
-    clientName: "",
-    industry: "",
-    businessProblem: "",
-    desiredOutcomes: "",
-    targetAudience: ["CIO", "CTO", "CFO"] as string[],
-    selectedArtifacts: ["Impact Statement", "Executive Briefing Deck", "Solution Map", "90-Day Execution Plan"] as string[],
-    timeHorizon: "90 days for pilot planning; 6-8 months for full modernization"
+    name: initial?.name ?? "",
+    clientName: initial?.clientName ?? "",
+    tpid: initial?.tpid ?? "",
+    msxOppId: initial?.msxOppId ?? "",
+    industry: initial?.industry ?? "",
+    businessProblem: initial?.businessProblem ?? "",
+    desiredOutcomes: (initial?.desiredOutcomes ?? []).join("\n"),
+    targetAudience: initial?.targetAudience ?? ["CIO", "CTO", "CFO"],
+    selectedArtifacts:
+      initial?.selectedArtifacts ?? ["Impact Statement", "Executive Briefing Deck", "Solution Map", "90-Day Execution Plan"],
+    timeHorizon: initial?.timeHorizon ?? "90 days for pilot planning; 6-8 months for full modernization"
   });
 
   function toggle(list: string[], v: string) {
@@ -42,17 +65,30 @@ export function ProjectIntakeWizard() {
     }
     setSubmitting(true);
     try {
-      const res = await fetch("/api/projects", {
-        method: "POST",
+      const payload = {
+        ...form,
+        clientName: form.clientName.trim() || null,
+        tpid: form.tpid.trim() || null,
+        msxOppId: form.msxOppId.trim() || null,
+        industry: form.industry.trim() || null,
+        timeHorizon: form.timeHorizon.trim() || null,
+        desiredOutcomes: form.desiredOutcomes.split("\n").map((s) => s.trim()).filter(Boolean)
+      };
+      const url = isEdit ? `/api/projects/${initial!.id}` : "/api/projects";
+      const method = isEdit ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...form,
-          desiredOutcomes: form.desiredOutcomes.split("\n").map((s) => s.trim()).filter(Boolean)
-        })
+        body: JSON.stringify(payload)
       });
-      if (!res.ok) throw new Error((await res.json()).error ?? "Failed to create project");
+      if (!res.ok) throw new Error((await res.json()).error ?? `Failed to ${isEdit ? "update" : "create"} project`);
       const project = await res.json();
-      router.push(`/projects/${project.id}/workshop`);
+      if (isEdit) {
+        router.push(`/projects/${project.id}`);
+        router.refresh();
+      } else {
+        router.push(`/projects/${project.id}/workshop`);
+      }
     } catch (e) {
       setError((e as Error).message);
       setSubmitting(false);
@@ -61,7 +97,7 @@ export function ProjectIntakeWizard() {
 
   return (
     <Card>
-      <CardHeader title="Project intake" subtitle="Required fields marked with *" />
+      <CardHeader title={isEdit ? "Edit project" : "Project intake"} subtitle="Required fields marked with *" />
       {error && (
         <div className="mb-4 p-3 rounded border border-red-500/40 bg-red-500/10 text-sm text-red-200">{error}</div>
       )}
@@ -72,13 +108,23 @@ export function ProjectIntakeWizard() {
             <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="OCR to GenAI Document Intelligence" />
           </div>
           <div>
-            <Label>Client / business unit</Label>
-            <Input value={form.clientName} onChange={(e) => setForm({ ...form, clientName: e.target.value })} />
+            <Label>Customer name</Label>
+            <Input value={form.clientName} onChange={(e) => setForm({ ...form, clientName: e.target.value })} placeholder="Contoso Logistics" />
           </div>
         </div>
-        <div>
-          <Label>Industry</Label>
-          <Input value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value })} placeholder="Transportation and Logistics" />
+        <div className="grid md:grid-cols-3 gap-4">
+          <div>
+            <Label>Industry</Label>
+            <Input value={form.industry} onChange={(e) => setForm({ ...form, industry: e.target.value })} placeholder="Transportation and Logistics" />
+          </div>
+          <div>
+            <Label>TPID #</Label>
+            <Input value={form.tpid} onChange={(e) => setForm({ ...form, tpid: e.target.value })} placeholder="e.g. 1234567" />
+          </div>
+          <div>
+            <Label>MSX Opp ID</Label>
+            <Input value={form.msxOppId} onChange={(e) => setForm({ ...form, msxOppId: e.target.value })} placeholder="e.g. 7-ABCDEFGH" />
+          </div>
         </div>
         <div>
           <Label>Business problem *</Label>
@@ -123,8 +169,15 @@ export function ProjectIntakeWizard() {
           </div>
         </div>
         <div className="flex items-center gap-3 pt-2">
-          <Button onClick={submit} disabled={submitting}>{submitting ? "Creating..." : "Create project & open workshop"}</Button>
-          <Badge tone="accent">Step 1 of 3</Badge>
+          <Button onClick={submit} disabled={submitting}>
+            {submitting
+              ? isEdit ? "Saving..." : "Creating..."
+              : isEdit ? "Save changes" : "Create project & open workshop"}
+          </Button>
+          {isEdit && (
+            <Button variant="ghost" onClick={() => router.back()} disabled={submitting}>Cancel</Button>
+          )}
+          {!isEdit && <Badge tone="accent">Step 1 of 3</Badge>}
         </div>
       </div>
     </Card>

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { Card, CardHeader, Badge, Button } from "@/components/ui";
-import { Users, Workflow, FileText, ArrowRight } from "lucide-react";
+import { Users, Workflow, FileText, ArrowRight, Pencil } from "lucide-react";
 import { parseJsonArray, formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -27,8 +27,16 @@ export default async function ProjectPage({ params }: { params: { projectId: str
         <div>
           <h1 className="text-2xl font-bold text-white">{project.name}</h1>
           <p className="text-slate-400 text-sm">{project.clientName ?? project.industry}</p>
+          {(project.tpid || project.msxOppId) && (
+            <p className="text-xs text-slate-500 mt-1">
+              {project.tpid && <span>TPID: <span className="text-slate-300">{project.tpid}</span></span>}
+              {project.tpid && project.msxOppId && <span className="mx-2">·</span>}
+              {project.msxOppId && <span>MSX Opp: <span className="text-slate-300">{project.msxOppId}</span></span>}
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link href={`/projects/${project.id}/edit`}><Button variant="ghost"><Pencil className="w-4 h-4" /> Edit</Button></Link>
           <Link href={`/projects/${project.id}/workshop`}><Button variant="secondary"><Users className="w-4 h-4" /> Workshop</Button></Link>
           <Link href={`/projects/${project.id}/agents`}><Button variant="secondary"><Workflow className="w-4 h-4" /> Agents</Button></Link>
           <Link href={`/projects/${project.id}/artifacts`}><Button><FileText className="w-4 h-4" /> Artifacts</Button></Link>

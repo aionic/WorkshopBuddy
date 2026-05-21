@@ -19,7 +19,9 @@
     "clsx": "^2.1.1",
     "docx": "^9.0.2",
     "lucide-react": "^0.460.0",
+    "mammoth": "^1.12.0",
     "next": "14.2.18",
+    "pdf-parse": "^2.4.5",
     "pg": "^8.13.1",
     "pptxgenjs": "^3.12.0",
     "react": "^18.3.1",
@@ -28,6 +30,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.6",
+    "@types/pdf-parse": "^1.1.5",
     "@types/pg": "^8.11.10",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
