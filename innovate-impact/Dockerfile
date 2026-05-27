@@ -31,7 +31,7 @@ WORKDIR /app
 RUN tdnf install -y openssl ca-certificates wget && tdnf clean all
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3000
+ENV PORT=80
 ENV HOSTNAME=0.0.0.0
 # DATABASE_URL (postgres + Entra auth) and AZURE_CLIENT_ID are injected by the
 # Container App at runtime. start.js fetches an Entra token for `prisma db push`
@@ -49,9 +49,9 @@ COPY --from=builder /app/start.js ./start.js
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/src/lib/prompts ./src/lib/prompts
 
-EXPOSE 3000
+EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD wget -qO- http://localhost:3000/api/health || exit 1
+  CMD wget -qO- http://localhost:80/api/health || exit 1
 
 # Fetch an Entra token, run prisma db push, seed, then start Next.js.
 CMD ["node", "start.js"]

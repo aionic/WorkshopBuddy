@@ -10,6 +10,10 @@ out/
 .env.local
 .env.*.local
 
+# --- azd local environment state ---
+.azure/
+**/.azure/
+
 # --- build / deploy logs ---
 *.log
 deploy-output.log

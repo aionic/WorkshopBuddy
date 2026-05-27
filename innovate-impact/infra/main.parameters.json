@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "principalId": {
+      "value": "${AZURE_PRINCIPAL_ID}"
+    },
+    "principalLogin": {
+      "value": "${AZURE_PRINCIPAL_LOGIN=}"
+    },
+    "pgServerLocation": {
+      "value": "${PG_SERVER_LOCATION=}"
+    },
+    "foundryLocation": {
+      "value": "${FOUNDRY_LOCATION=}"
+    },
+    "foundryModelName": {
+      "value": "${FOUNDRY_MODEL_NAME=gpt-4o-mini}"
+    },
+    "foundryModelVersion": {
+      "value": "${FOUNDRY_MODEL_VERSION=2024-07-18}"
+    },
+    "foundryModelSku": {
+      "value": "${FOUNDRY_MODEL_SKU=GlobalStandard}"
+    },
+    "foundryModelCapacity": {
+      "value": "${FOUNDRY_MODEL_CAPACITY=10}"
+    },
+    "webAppImage": {
+      "value": "${WEB_APP_IMAGE=mcr.microsoft.com/k8se/quickstart:latest}"
+    },
+    "appTargetPort": {
+      "value": "${APP_TARGET_PORT=80}"
+    }
+  }
+}

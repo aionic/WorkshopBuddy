@@ -1,0 +1,98 @@
+name: workshopbuddy
+metadata:
+  template: workshopbuddy-aca-azd@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
+services:
+  web:
+    project: .
+    host: containerapp
+    language: js
+    docker:
+      path: ./Dockerfile
+      context: .
+      remoteBuild: true
+
+hooks:
+  preprovision:
+    posix:
+      shell: sh
+      run: |
+        set -e
+        APP_NAME=$(azd env get-value AZURE_CONTAINER_APP_NAME 2>/dev/null || echo "")
+        RG=$(azd env get-value AZURE_RESOURCE_GROUP 2>/dev/null || echo "")
+        if [ -n "$APP_NAME" ] && [ -n "$RG" ]; then
+          IMG=$(az containerapp show -g "$RG" -n "$APP_NAME" --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "")
+          if [ -n "$IMG" ]; then
+            azd env set WEB_APP_IMAGE "$IMG"
+          fi
+        fi
+        PRINCIPAL_LOGIN=$(az ad signed-in-user show --query userPrincipalName -o tsv 2>/dev/null || echo "")
+        if [ -n "$PRINCIPAL_LOGIN" ]; then
+          azd env set AZURE_PRINCIPAL_LOGIN "$PRINCIPAL_LOGIN"
+        fi
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Continue'
+        $env:PYTHONIOENCODING = 'utf-8'
+        $env:PYTHONUTF8 = '1'
+        $appName = (azd env get-value AZURE_CONTAINER_APP_NAME 2>$null)
+        $rg = (azd env get-value AZURE_RESOURCE_GROUP 2>$null)
+        if ($appName -and $rg) {
+          $img = (az containerapp show -g $rg -n $appName --query "properties.template.containers[0].image" -o tsv 2>$null)
+          if ($img) { azd env set WEB_APP_IMAGE $img | Out-Null }
+        }
+        $upn = (az ad signed-in-user show --query userPrincipalName -o tsv 2>$null)
+        if ($upn) { azd env set AZURE_PRINCIPAL_LOGIN $upn | Out-Null }
+  postprovision:
+    posix:
+      shell: sh
+      run: |
+        set -e
+        RG=$(azd env get-value AZURE_RESOURCE_GROUP)
+        PG=$(azd env get-value AZURE_PG_SERVER_NAME)
+        UAMI_PID=$(azd env get-value AZURE_UAMI_PRINCIPAL_ID)
+        USER_PID=$(azd env get-value AZURE_PRINCIPAL_ID 2>/dev/null || echo "")
+        USER_UPN=$(azd env get-value AZURE_PRINCIPAL_LOGIN 2>/dev/null || echo "")
+        echo "Assigning Postgres Entra admins on $PG ..."
+        az postgres flexible-server microsoft-entra-admin create -g "$RG" -s "$PG" --object-id "$UAMI_PID" --display-name "workshop-buddy-uami" --type ServicePrincipal --only-show-errors 1>/dev/null
+        if [ -n "$USER_PID" ] && [ -n "$USER_UPN" ]; then
+          az postgres flexible-server microsoft-entra-admin create -g "$RG" -s "$PG" --object-id "$USER_PID" --display-name "$USER_UPN" --type User --only-show-errors 1>/dev/null
+        fi
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $env:PYTHONIOENCODING = 'utf-8'
+        $env:PYTHONUTF8 = '1'
+        $env:AZURE_CORE_DISABLE_AUTOUPGRADE = '1'
+        $vals = @{}
+        azd env get-values | ForEach-Object {
+          if ($_ -match '^([A-Z_]+)="?(.*?)"?$') { $vals[$matches[1]] = $matches[2] }
+        }
+        $rg = $vals['AZURE_RESOURCE_GROUP']
+        $pg = $vals['AZURE_PG_SERVER_NAME']
+        $uamiPid = $vals['AZURE_UAMI_PRINCIPAL_ID']
+        Write-Host "Assigning Postgres Entra admins on $pg ..." -ForegroundColor Cyan
+        az postgres flexible-server microsoft-entra-admin create -g $rg -s $pg --object-id $uamiPid --display-name "workshop-buddy-uami" --type ServicePrincipal --only-show-errors | Out-Null
+        $signedIn = az ad signed-in-user show --query "{id:id,upn:userPrincipalName}" -o json 2>$null | ConvertFrom-Json
+        if ($signedIn -and $signedIn.id) {
+          az postgres flexible-server microsoft-entra-admin create -g $rg -s $pg --object-id $signedIn.id --display-name $signedIn.upn --type User --only-show-errors | Out-Null
+          Write-Host "Added user admin: $($signedIn.upn)" -ForegroundColor Green
+        }
+  postdeploy:
+    posix:
+      shell: sh
+      run: |
+        URL=$(azd env get-value SERVICE_WEB_URI 2>/dev/null || echo "")
+        if [ -n "$URL" ]; then echo "Workshop Buddy deployed: $URL"; fi
+    windows:
+      shell: pwsh
+      run: |
+        $url = (azd env get-value SERVICE_WEB_URI 2>$null)
+        if ($url) { Write-Host "Workshop Buddy deployed: $url" -ForegroundColor Green }

@@ -2,6 +2,7 @@ node_modules
 .next
 out
 .env
+.azure
 data/*.db
 data/*.db-journal
 prisma/data/*.db

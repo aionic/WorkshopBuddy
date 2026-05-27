@@ -141,6 +141,18 @@ The script:
 
 > The deploying principal needs **Contributor** on `rgWorkshopBuddy` *and* permission to create role assignments on the Foundry resource group `rg-jamesbas-demo-project` (Owner / User Access Administrator). RBAC propagation can take a couple of minutes after the first deployment.
 
+### `azd up` workflow (new)
+
+This repo now includes an `azd`-based deployment path with placeholder bootstrap support for first-time environments.
+
+1. Project config: [`azure.yaml`](azure.yaml)
+2. Step-by-step runbook: [`.azure/azd-runbook.md`](.azure/azd-runbook.md)
+3. Placeholder image assets: [`infra/placeholder/Dockerfile`](infra/placeholder/Dockerfile)
+4. Placeholder build helper: [`scripts/build-placeholder-image.ps1`](scripts/build-placeholder-image.ps1)
+5. End-to-end scripted flow: [`scripts/azd-deploy.ps1`](scripts/azd-deploy.ps1)
+
+Use this flow when you want `azd` to provision infra, bring up a placeholder app first, and then cut over to the real application image.
+
 ### How the Azure Postgres piece works
 
 - **Server**: `pg-workshopbuddy-wus3.postgres.database.azure.com` (westus3) — declared in `infra/main.bicep` with `Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01`, `activeDirectoryAuth: Enabled`, `passwordAuth: Disabled`.
