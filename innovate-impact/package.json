@@ -3,10 +3,16 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3000",
-    "build": "prisma generate && next build",
-    "start": "next start -p 3000",
+    "predev": "prisma generate",
+    "dev": "node scripts/with-utf8.js next dev -p 3000",
+    "prebuild": "prisma generate",
+    "build": "node scripts/with-utf8.js next build",
+    "start": "node scripts/with-utf8.js next start -p 3000",
     "lint": "next lint",
+    "lint:fix": "next lint --fix",
+    "pretypecheck": "prisma generate",
+    "typecheck": "tsc --noEmit",
+    "test": "echo \"no tests yet\" && exit 0",
     "db:push": "prisma db push",
     "db:seed": "tsx prisma/seed.ts",
     "db:reset": "prisma db push --force-reset && tsx prisma/seed.ts",
@@ -28,7 +34,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.5.4",
-    "tsx": "^4.22.3"
+    "tsx": "^4.22.3",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/node": "^20.17.6",
@@ -37,6 +44,8 @@
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.18",
     "postcss": "^8.4.49",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.14",

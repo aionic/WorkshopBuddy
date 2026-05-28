@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect, useRef } from "react";
 import { Card, CardHeader, Badge, Button, Select, Textarea, Label } from "@/components/ui";
 import { ThumbsUp, Trash2, Workflow, ArrowRight, Pencil, Check, X, Sparkles } from "lucide-react";
 import { CATEGORIES, PERSONAS, PRIORITIES } from "@/lib/workshop-enums";
@@ -26,6 +26,12 @@ export function WorkshopBoard({ project }: { project: { id: string; name: string
   const [savingEdit, setSavingEdit] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importToast, setImportToast] = useState<string | null>(null);
+  // S-12: track the toast dismiss timer so it can be cancelled if the
+  // component unmounts before it fires (avoids setState-after-unmount warn).
+  const importToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (importToastTimer.current) clearTimeout(importToastTimer.current);
+  }, []);
 
   const filtered = useMemo(() => filter === "All" ? inputs : inputs.filter((i) => i.category === filter), [inputs, filter]);
 
@@ -267,7 +273,8 @@ export function WorkshopBoard({ project }: { project: { id: string; name: string
             // non-fatal — user can hit Refresh
           }
           router.refresh();
-          setTimeout(() => setImportToast(null), 6000);
+          if (importToastTimer.current) clearTimeout(importToastTimer.current);
+          importToastTimer.current = setTimeout(() => setImportToast(null), 6000);
         }}
       />
     </div>

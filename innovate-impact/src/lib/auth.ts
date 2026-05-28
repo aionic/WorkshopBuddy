@@ -182,3 +182,38 @@ export function withAuth<TArgs extends unknown[]>(
     }
   };
 }
+
+/**
+ * S-9: Higher-order wrapper for project-scoped routes.
+ *
+ * Composes `withAuth` + `assertProjectAccess` so the handler receives a
+ * pre-validated `{ user, project, params }` context. Eliminates the
+ * `withAuth + assertProjectAccess` boilerplate that gets repeated across
+ * ~13 route handlers (and was the soil for the original IDOR — P0-6).
+ *
+ * Usage:
+ *   export const GET = withProjectAuth(async (_req, { user, project, params }) => {
+ *     // user.oid, project.id, params.projectId all guaranteed valid.
+ *     return apiOk({ ... });
+ *   });
+ */
+export interface ProjectRouteContext<P extends { projectId: string }> {
+  user: AuthUser;
+  project: { id: string; ownerId: string };
+  params: P;
+}
+
+export function withProjectAuth<P extends { projectId: string }>(
+  handler: (req: Request, ctx: ProjectRouteContext<P>) => Promise<Response>,
+): (req: Request, routeCtx: { params: P }) => Promise<Response> {
+  return async (req: Request, routeCtx: { params: P }) => {
+    try {
+      const user = requireUser(req);
+      const project = await assertProjectAccess(routeCtx.params.projectId, user);
+      return await handler(req, { user, project, params: routeCtx.params });
+    } catch (err) {
+      if (err instanceof AuthError) return err.response;
+      throw err;
+    }
+  };
+}

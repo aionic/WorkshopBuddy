@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertProjectAccess, withAuth } from "@/lib/auth";
+import { withProjectAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-type Ctx = { params: { projectId: string } };
-
-export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
-  await assertProjectAccess(params.projectId, user);
+export const GET = withProjectAuth(async (_req, { params }) => {
   const artifacts = await prisma.artifact.findMany({
     where: { projectId: params.projectId },
     orderBy: { updatedAt: "desc" }

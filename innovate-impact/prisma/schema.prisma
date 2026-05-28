@@ -43,6 +43,9 @@ model Project {
   agentRuns         AgentRun[]
   artifacts         Artifact[]
   transcriptIngests TranscriptIngest[]
+
+  // S-2: hot read pattern is `findMany(where ownerId, orderBy updatedAt desc)`.
+  @@index([ownerId, updatedAt(sort: Desc)])
 }
 
 model WorkshopInput {
@@ -60,6 +63,10 @@ model WorkshopInput {
   /// for traceability and future "revert / re-extract" flows.
   transcriptIngestId String?
   transcriptIngest   TranscriptIngest? @relation(fields: [transcriptIngestId], references: [id], onDelete: SetNull)
+
+  // S-2: hot read patterns — list per project ordered by createdAt, and FK lookup.
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([transcriptIngestId])
 }
 
 /// Audit row written every time a transcript is ingested for a project.
@@ -80,6 +87,9 @@ model TranscriptIngest {
   hints         String?
   createdAt     DateTime        @default(now())
   inputs        WorkshopInput[]
+
+  // S-2: FK lookup pattern.
+  @@index([projectId])
 }
 
 model AgentRun {
@@ -93,6 +103,10 @@ model AgentRun {
   startedAt   DateTime?
   completedAt DateTime?
   createdAt   DateTime  @default(now())
+
+  // S-2: hot reads — list per project ordered by createdAt; sweeper scans by status.
+  @@index([projectId, createdAt(sort: Desc)])
+  @@index([status, createdAt])
 }
 
 model Artifact {
@@ -108,6 +122,13 @@ model Artifact {
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   versions       ArtifactVersion[]
+
+  // S-1: one artifact per (project, type) — the worker + web fallback both
+  // "upsert by type". Without this constraint racing runs could create duplicate
+  // rows that the UI then surfaces as confusing twins.
+  @@unique([projectId, artifactType])
+  // S-2: hot read — list per project ordered by updatedAt.
+  @@index([projectId, updatedAt(sort: Desc)])
 }
 
 model ArtifactVersion {
@@ -119,4 +140,7 @@ model ArtifactVersion {
   markdown    String?
   notes       String?
   createdAt   DateTime @default(now())
+
+  // S-2: hot read — versions(orderBy version desc) for the workspace history view.
+  @@index([artifactId, version(sort: Desc)])
 }

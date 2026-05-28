@@ -234,6 +234,192 @@ Routes currently do ad-hoc `typeof` checks and silently truncate (e.g. `content.
 
 ---
 
+## S — Stabilization & Brittleness
+
+Items surfaced by the 2026-05-28 dev-lead review. Numbered `S-*` so existing `P0-*`/`P1-*` references stay stable. Same priority semantics (P0/P1/P2/P3).
+
+### S-1 ☐ [P1 · DL · DB] Atomic artifact upsert
+Two code paths (web in-process fallback + worker) both do `findFirst → create/update` per `(projectId, artifactType)` with no unique constraint. Concurrent runs can produce duplicate `Artifact` rows.
+
+**Acceptance criteria**
+- `Artifact` schema: `@@unique([projectId, artifactType])`.
+- Both write sites switch to `prisma.$transaction([upsert artifact, create version])`.
+- Migration includes pre-cleanup `DELETE` for any existing duplicates (keeps newest); reviewer approves the destructive lines.
+- Concurrency test: two parallel `POST /api/projects/:id/agent-runs` → exactly one Artifact row per type.
+
+**Files:** [prisma/schema.prisma](innovate-impact/prisma/schema.prisma), new `prisma/migrations/<ts>_stabilize_artifact_uniqueness/`, [src/app/api/projects/[projectId]/agent-runs/route.ts](innovate-impact/src/app/api/projects/%5BprojectId%5D/agent-runs/route.ts), `worker/agent-run-worker.ts`.
+
+### S-2 ☐ [P1 · DL · DB] FK indexes on hot filter columns
+Prisma's implicit indexes don't cover the FK columns Workshop Buddy filters by most.
+
+**Acceptance criteria**
+- `@@index([projectId])` on `WorkshopInput`, `AgentRun`, `Artifact`, `TranscriptIngest`.
+- `@@index([artifactId])` on `ArtifactVersion`.
+- Single migration, no data movement.
+
+**Files:** [prisma/schema.prisma](innovate-impact/prisma/schema.prisma).
+
+### S-3 ☐ [P2 · DL · DB] Bound `AgentRun.llmError` writes to 4 KB
+Free-form text column written from raw provider errors can bloat the row and Prisma payloads.
+
+**Acceptance criteria**
+- All `AgentRun.update({ data: { llmError } })` call sites truncate to 4096 chars with a `…(truncated)` suffix.
+- Documented soft cap in `src/lib/agents/orchestrator.ts` near the error handler.
+
+**Files:** [src/lib/agents/orchestrator.ts](innovate-impact/src/lib/agents/orchestrator.ts), `worker/agent-run-worker.ts`.
+
+### S-4 ☐ [P1 · DL · Worker] Typed Service Bus envelope
+Producer (`lib/agents/queue.ts`) and consumer (`worker/agent-run-worker.ts`) share a shape only by convention.
+
+**Acceptance criteria**
+- New `worker/envelope.ts` exports a zod schema `{ runId: string, projectId: string, version: 1 }`.
+- Producer imports + validates before send; consumer imports + validates on receive.
+- Malformed messages dead-lettered with reason `"envelope-validation-failed"`.
+
+**Files:** new `innovate-impact/worker/envelope.ts`, `innovate-impact/worker/agent-run-worker.ts`, `innovate-impact/src/lib/agents/queue.ts`.
+
+### S-5 ☐ [P1 · DL · Worker] Idempotent run handler
+Service Bus redelivery (lock loss, restart) can re-execute a completed run, double-billing AI tokens.
+
+**Acceptance criteria**
+- Worker re-reads `AgentRun` at start; if `status ∈ {Completed, Failed}` it ack-completes the message without re-invoking the orchestrator.
+- Log line: `runId=… already terminal (status), ack-only`.
+- Manual test: complete a run, re-enqueue same `runId` → no second AI call.
+
+**Files:** `innovate-impact/worker/agent-run-worker.ts`.
+
+### S-6 ☐ [P1 · DL · Worker] Dedupe artifact persistence
+Web fallback (route handler) and worker each contain near-identical 25-line artifact-upsert loops; drift risk is real.
+
+**Acceptance criteria**
+- New `src/lib/agents/persist-artifacts.ts` exports a single function used by both call sites.
+- Removed from both call sites; no behavior change visible to clients.
+
+**Files:** new [src/lib/agents/persist-artifacts.ts](innovate-impact/src/lib/agents/persist-artifacts.ts), [src/app/api/projects/[projectId]/agent-runs/route.ts](innovate-impact/src/app/api/projects/%5BprojectId%5D/agent-runs/route.ts), `worker/agent-run-worker.ts`.
+
+### S-7 ☐ [P0 · DL · Config] Typed env at boot
+`process.env.*` is read ad-hoc in 6+ places. Misconfiguration shows up as a 500 hours later.
+
+**Acceptance criteria**
+- New `src/lib/env.ts` with zod schema; validated at module import.
+- Required keys gated by `AI_PROVIDER` (e.g. only require `AZURE_OPENAI_*` when `AI_PROVIDER=azure-openai`).
+- Missing required → process exits non-zero with a single `[env] missing: …` line.
+- All `provider.ts`, `db.ts`, `queue.ts` callers go through `env`.
+
+**Files:** new [src/lib/env.ts](innovate-impact/src/lib/env.ts), [src/lib/db.ts](innovate-impact/src/lib/db.ts), [src/lib/ai/provider.ts](innovate-impact/src/lib/ai/provider.ts), [src/lib/agents/queue.ts](innovate-impact/src/lib/agents/queue.ts).
+
+### S-8 ☐ [P1 · DL · Config] Explicit credential strategy
+`db.ts` silently picks a credential mode based on `AZURE_CLIENT_ID` presence. Brittle in CI/local.
+
+**Acceptance criteria**
+- New `AZURE_CREDENTIAL_MODE = cli | default | managed-identity` env (validated by S-7).
+- `db.ts` switches on the explicit value; no presence-based heuristic.
+- Closes [P1-11](#p1-11) by collapsing the `@ts-expect-error` PrismaPg reflection path into a pure async password callback.
+
+**Files:** [src/lib/db.ts](innovate-impact/src/lib/db.ts), new `src/lib/env.ts`.
+
+### S-9 ☐ [P0 · DL · API] `withProjectAuth` higher-order wrapper
+13 routes repeat `withAuth + assertProjectAccess + parse body + handler`. Boilerplate breeds bugs (and was the soil for the original IDOR — P0-6).
+
+**Acceptance criteria**
+- New `withProjectAuth(handler)` in [src/lib/auth.ts](innovate-impact/src/lib/auth.ts); handler receives `{ user, project, params, body? }`.
+- All 13 project-scoped routes rewired; non-project routes keep `withAuth`.
+- `typecheck && lint && build` green; e2e demo still works.
+
+**Files:** [src/lib/auth.ts](innovate-impact/src/lib/auth.ts), every route under [src/app/api/projects/](innovate-impact/src/app/api/projects/) + artifact/input subtrees.
+
+### S-10 ☐ [P1 · DL · API] Standard response envelope
+Ad-hoc `NextResponse.json({ error }, { status: 4xx })` shapes prevent any client-side discriminated unions and make P0-5 zod work messy.
+
+**Acceptance criteria**
+- New `src/lib/api/response.ts` exports `apiOk(data, init?)` and `apiError(code, message, init?, issues?)`.
+- Shape: `{ ok: true, data }` / `{ ok: false, error: { code, message, issues? } }`.
+- All API routes converted (mechanical; tracked alongside Cluster 1/2).
+
+**Files:** new [src/lib/api/response.ts](innovate-impact/src/lib/api/response.ts), all routes under [src/app/api/](innovate-impact/src/app/api/).
+
+### S-11 ☐ [P1 · UX · FE] Resilient polling hook
+[src/components/agent-workflow-canvas.tsx](innovate-impact/src/components/agent-workflow-canvas.tsx) hand-rolls `setInterval` with no error backoff and (depending on path) no unmount cleanup.
+
+**Acceptance criteria**
+- New `src/hooks/use-polling-fetch.ts` with `{ intervalMs, maxBackoffMs }`, per-tick try/catch, exponential backoff, mount-aware cleanup.
+- `agent-workflow-canvas.tsx` refactored to use it.
+- Manual test: navigate away mid-poll → no console errors, no stray network calls.
+
+**Files:** new `innovate-impact/src/hooks/use-polling-fetch.ts`, [src/components/agent-workflow-canvas.tsx](innovate-impact/src/components/agent-workflow-canvas.tsx).
+
+### S-12 ☐ [P2 · UX · FE] Unmount-safe toasts
+[src/components/workshop-board.tsx](innovate-impact/src/components/workshop-board.tsx) uses bare `setTimeout` for toast dismissal; unmounting mid-timer warns in React.
+
+**Acceptance criteria**
+- All `setTimeout` toast dismissals wrapped in `useEffect` with cleanup, or migrated to a tiny shared toast primitive.
+
+**Files:** [src/components/workshop-board.tsx](innovate-impact/src/components/workshop-board.tsx).
+
+### S-13 ☐ [P2 · UX · FE] Error handling in intake wizard
+[src/components/project-intake-wizard.tsx](innovate-impact/src/components/project-intake-wizard.tsx) `.then` chains lack `.catch`; failed fetches silently strand the wizard.
+
+**Acceptance criteria**
+- Every `fetch` followed by `.catch` that surfaces a visible inline error and resets loading state.
+- Precursor to [P2-19](#p2-19) error boundaries.
+
+**Files:** [src/components/project-intake-wizard.tsx](innovate-impact/src/components/project-intake-wizard.tsx).
+
+### S-14 ☐ [P1 · DL · Obs] Real `/api/health` + boot gate
+`/api/health` returns 200 unconditionally; ACA marks the revision Healthy even when DB is unreachable.
+
+**Acceptance criteria**
+- `/api/health` runs `SELECT 1` against the pool; returns `{ status, db: "up"|"down", aiProvider, gitSha }` with appropriate HTTP code.
+- [start.js](innovate-impact/start.js) runs the same probe before `require('./server.js')`; non-zero exit on failure.
+- Verify: `docker run` with bogus `DATABASE_URL` → container exits in <10s; ACA marks Unhealthy.
+
+**Files:** [src/app/api/health/route.ts](innovate-impact/src/app/api/health/route.ts), [start.js](innovate-impact/start.js).
+
+### S-15 ☐ [P1 · DL · Types] Strongly-type `SynthesisBundle` + orchestrator outputs
+[src/lib/agents/orchestrator.ts](innovate-impact/src/lib/agents/orchestrator.ts) leans on `any` at L53 and `(x as any[])` at L449/469/500/533/536/565.
+
+**Acceptance criteria**
+- `SynthesisBundle` and each agent output get discriminated-union types mirroring [src/lib/agents/agent-prompts.ts](innovate-impact/src/lib/agents/agent-prompts.ts) schemas.
+- Each LLM JSON is runtime-validated with the same zod schema before downstream code uses it.
+- Zero `any` in orchestrator; `tsc --noEmit` clean.
+
+**Files:** [src/lib/agents/orchestrator.ts](innovate-impact/src/lib/agents/orchestrator.ts), [src/lib/agents/agent-prompts.ts](innovate-impact/src/lib/agents/agent-prompts.ts).
+
+### S-16 ☐ [P3 · DL · DX] Dev-loop script polish
+**Acceptance criteria**
+- `package.json` scripts: `format` (prettier), `lint:fix`, `test`, `test:unit`, `test:e2e`. Placeholders OK where tooling isn't picked yet.
+- README "Scripts" section updated.
+
+**Files:** [innovate-impact/package.json](innovate-impact/package.json), [innovate-impact/README.md](innovate-impact/README.md).
+
+### S-17 ☐ [P2 · UX · Doc] Drop stale README token snippet
+README still shows a `$env:DATABASE_URL = "...$t..."` manual-token workflow that predates the driver adapter.
+
+**Acceptance criteria**
+- Section rewritten to: "`az login` is enough; Prisma uses the driver adapter to fetch tokens automatically."
+
+**Files:** [innovate-impact/README.md](innovate-impact/README.md).
+
+### S-18 ☐ [P2 · DL · Doc] Single source of truth for agent prompts
+[innovate-impact/agent-prompts.md](innovate-impact/agent-prompts.md) duplicates content from [src/lib/agents/agent-prompts.ts](innovate-impact/src/lib/agents/agent-prompts.ts) and will drift.
+
+**Acceptance criteria**
+- Delete `agent-prompts.md` (recommended); add pointer comment at top of `agent-prompts.ts` noting it is canonical.
+- Alternative on user confirmation: keep .md and add `npm run docs:agents` generator from .ts.
+
+**Files:** [innovate-impact/agent-prompts.md](innovate-impact/agent-prompts.md), [src/lib/agents/agent-prompts.ts](innovate-impact/src/lib/agents/agent-prompts.ts).
+
+### S-19 ☐ [P3 · UX · Clean] Move root scratch markdown files
+Repo root contains [buddy-intro-email.md](buddy-intro-email.md), [sample-transcript.md](sample-transcript.md), [transcript-ingest.md](transcript-ingest.md) — none are entry points.
+
+**Acceptance criteria**
+- Files moved to `docs/` (or `samples/` for sample-transcript.md).
+- Any reference (README, etc.) updated.
+
+**Files:** repo root → `docs/`.
+
+---
+
 ## P2 — UX, a11y, dev ergonomics
 
 ### P2-16 ☐ [UX · Trust] Identity surface in the shell

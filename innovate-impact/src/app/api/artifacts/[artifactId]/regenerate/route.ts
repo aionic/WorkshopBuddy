@@ -3,13 +3,17 @@ import { prisma } from "@/lib/db";
 import { regenerateArtifact } from "@/lib/agents/orchestrator";
 import type { ArtifactType } from "@/lib/artifacts/artifact-schemas";
 import { assertArtifactAccess, withAuth } from "@/lib/auth";
+import { parseBody } from "@/lib/api/parse-body";
+import { artifactRegenerateSchema } from "@/lib/api/schemas";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600;
 
 export const POST = withAuth<[{ params: { artifactId: string } }]>(async (req, user, { params }) => {
   await assertArtifactAccess(params.artifactId, user);
-  const body = (await req.json().catch(() => ({}))) as { revisionInstructions?: string };
+  const parsed = await parseBody(req, artifactRegenerateSchema);
+  if (parsed instanceof NextResponse) return parsed;
+
   const existing = await prisma.artifact.findUnique({ where: { id: params.artifactId } });
   if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -21,7 +25,7 @@ export const POST = withAuth<[{ params: { artifactId: string } }]>(async (req, u
     project.inputs as any,
     existing.markdown ?? "",
     existing.artifactType as ArtifactType,
-    body.revisionInstructions ?? ""
+    parsed.revisionInstructions ?? ""
   );
 
   await prisma.artifactVersion.create({

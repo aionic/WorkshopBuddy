@@ -34,6 +34,10 @@ function run(cmd, args, env) {
     process.exit(1);
   }
 
+  // S-14: boot gate — fail fast with a clear message if the database is
+  // unreachable, rather than letting the first user request 500.
+  await probeDatabase();
+
   // 1) Seed -- idempotent (no-ops if seed row already present).
   //    seed.js uses the driver adapter, which fetches its own Entra token.
   run(process.execPath, ["prisma/seed.js"], process.env);
@@ -45,3 +49,28 @@ function run(cmd, args, env) {
   console.error("[start] fatal:", err);
   process.exit(1);
 });
+
+async function probeDatabase() {
+  const probeTimeoutMs = Number(process.env.DB_PROBE_TIMEOUT_MS ?? 15000);
+  console.log(`[start] probing database (timeout=${probeTimeoutMs}ms)...`);
+  let PrismaClient;
+  try {
+    ({ PrismaClient } = require("@prisma/client"));
+  } catch (err) {
+    console.error("[start] could not load @prisma/client; skipping boot probe:", err.message);
+    return;
+  }
+  const client = new PrismaClient();
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error(`db probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs)
+  );
+  try {
+    await Promise.race([client.$queryRawUnsafe("SELECT 1"), timeout]);
+    console.log("[start] db probe ok");
+  } catch (err) {
+    console.error("[start] db probe failed:", err.message ?? err);
+    process.exit(1);
+  } finally {
+    await client.$disconnect().catch(() => {});
+  }
+}

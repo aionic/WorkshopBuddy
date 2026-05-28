@@ -2,16 +2,17 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { runInnovationWorkflow } from "@/lib/agents/orchestrator";
 import { enqueueAgentRun, isAgentRunQueueConfigured } from "@/lib/agents/queue";
+import { persistArtifacts } from "@/lib/agents/persist-artifacts";
+import { truncate } from "@/lib/agents/envelope";
 import type { ArtifactType } from "@/lib/artifacts/artifact-schemas";
-import { assertProjectAccess, withAuth } from "@/lib/auth";
+import { withProjectAuth } from "@/lib/auth";
+import { parseBody } from "@/lib/api/parse-body";
+import { agentRunCreateSchema } from "@/lib/api/schemas";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600;
 
-type Ctx = { params: { projectId: string } };
-
-export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
-  await assertProjectAccess(params.projectId, user);
+export const GET = withProjectAuth(async (_req, { params }) => {
   const runs = await prisma.agentRun.findMany({
     where: { projectId: params.projectId },
     orderBy: { createdAt: "desc" }
@@ -19,13 +20,10 @@ export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
   return NextResponse.json(runs);
 });
 
-export const POST = withAuth<[Ctx]>(async (req, user, { params }) => {
-  await assertProjectAccess(params.projectId, user);
-  const body = (await req.json().catch(() => ({}))) as {
-    mode?: string;
-    artifactTypes?: ArtifactType[];
-    customInstructions?: string;
-  };
+export const POST = withProjectAuth(async (req, { params }) => {
+  const parsed = await parseBody(req, agentRunCreateSchema);
+  if (parsed instanceof NextResponse) return parsed;
+  const body = parsed;
 
   const project = await prisma.project.findUnique({
     where: { id: params.projectId },
@@ -61,7 +59,7 @@ export const POST = withAuth<[Ctx]>(async (req, user, { params }) => {
         data: {
           status: "Failed",
           completedAt: new Date(),
-          outputJson: JSON.stringify({ error: `Enqueue failed: ${(err as Error).message}` })
+          outputJson: JSON.stringify({ error: truncate(`Enqueue failed: ${(err as Error).message}`) })
         }
       });
       return NextResponse.json({ error: "Failed to queue agent run" }, { status: 502 });
@@ -85,36 +83,8 @@ async function executeRunInBackground(
       customInstructions: body.customInstructions
     });
 
-    // Persist artifacts (upsert by type for this project)
-    for (const a of result.artifacts) {
-      const existing = await prisma.artifact.findFirst({ where: { projectId: project.id, artifactType: a.artifactType } });
-      if (existing) {
-        const nextVersion = existing.currentVersion + 1;
-        await prisma.artifactVersion.create({
-          data: { artifactId: existing.id, version: existing.currentVersion, contentJson: existing.contentJson, markdown: existing.markdown }
-        });
-        await prisma.artifact.update({
-          where: { id: existing.id },
-          data: {
-            title: a.content.title,
-            contentJson: JSON.stringify(a.content),
-            markdown: a.markdown,
-            currentVersion: nextVersion,
-            status: "Draft"
-          }
-        });
-      } else {
-        await prisma.artifact.create({
-          data: {
-            projectId: project.id,
-            artifactType: a.artifactType,
-            title: a.content.title,
-            contentJson: JSON.stringify(a.content),
-            markdown: a.markdown
-          }
-        });
-      }
-    }
+    // S-6: shared persistence routine (also used by the worker).
+    await persistArtifacts(project.id, result.artifacts);
 
     await prisma.agentRun.update({
       where: { id: runId },
@@ -134,7 +104,7 @@ async function executeRunInBackground(
     await prisma.agentRun
       .update({
         where: { id: runId },
-        data: { status: "Failed", completedAt: new Date(), outputJson: JSON.stringify({ error: (err as Error).message }) }
+        data: { status: "Failed", completedAt: new Date(), outputJson: JSON.stringify({ error: truncate((err as Error).message ?? String(err)) }) }
       })
       .catch((e) => console.error(`[agent-runs] Failed to mark run ${runId} as Failed:`, e));
   }

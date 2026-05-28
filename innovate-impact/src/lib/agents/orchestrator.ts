@@ -62,15 +62,21 @@ export interface AgentResult {
   durationMs?: number;
 }
 
+// S-15: agent intermediate outputs are LLM JSON without runtime schemas, so
+// the synthesis bundle is intentionally typed `any` for now. Tightening this
+// requires zod parsing at every agent boundary and is tracked separately.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AgentJson = any;
+
 export interface SynthesisBundle {
-  intake: any;
-  painPoints: any;
-  businessImpact: any;
-  solutionConcept: any;
-  architecture: any;
-  kpis: any;
-  roadmap: any;
-  executiveStory: any;
+  intake: AgentJson;
+  painPoints: AgentJson;
+  businessImpact: AgentJson;
+  solutionConcept: AgentJson;
+  architecture: AgentJson;
+  kpis: AgentJson;
+  roadmap: AgentJson;
+  executiveStory: AgentJson;
 }
 
 export interface OrchestrationResult {

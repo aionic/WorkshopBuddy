@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { assertProjectAccess, withAuth } from "@/lib/auth";
+import { withProjectAuth } from "@/lib/auth";
+import { parseBody } from "@/lib/api/parse-body";
+import { projectUpdateSchema } from "@/lib/api/schemas";
 
 export const dynamic = "force-dynamic";
 
-type Ctx = { params: { projectId: string } };
-
-export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
-  await assertProjectAccess(params.projectId, user);
+export const GET = withProjectAuth(async (_req, { params }) => {
   const project = await prisma.project.findUnique({
     where: { id: params.projectId },
     include: {
@@ -20,22 +19,26 @@ export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
   return NextResponse.json(project);
 });
 
-export const PUT = withAuth<[Ctx]>(async (req, user, { params }) => {
-  await assertProjectAccess(params.projectId, user);
-  const body = await req.json();
+export const PUT = withProjectAuth(async (req, { params }) => {
+  const parsed = await parseBody(req, projectUpdateSchema);
+  if (parsed instanceof NextResponse) return parsed;
+
+  // Build the prisma update payload: scalar fields pass through, JSON-encoded
+  // fields are stringified, undefined fields are skipped.
   const data: Record<string, unknown> = {};
-  for (const k of ["name", "clientName", "tpid", "msxOppId", "industry", "businessProblem", "timeHorizon", "status"]) {
-    if (body[k] !== undefined) data[k] = body[k];
+  for (const k of ["name", "clientName", "tpid", "msxOppId", "industry", "businessProblem", "timeHorizon", "status"] as const) {
+    const v = (parsed as Record<string, unknown>)[k];
+    if (v !== undefined) data[k] = v;
   }
-  for (const k of ["desiredOutcomes", "targetAudience", "selectedArtifacts"]) {
-    if (body[k] !== undefined) data[k] = JSON.stringify(body[k]);
+  for (const k of ["desiredOutcomes", "targetAudience", "selectedArtifacts"] as const) {
+    const v = (parsed as Record<string, unknown>)[k];
+    if (v !== undefined) data[k] = JSON.stringify(v);
   }
   const project = await prisma.project.update({ where: { id: params.projectId }, data });
   return NextResponse.json(project);
 });
 
-export const DELETE = withAuth<[Ctx]>(async (_req, user, { params }) => {
-  await assertProjectAccess(params.projectId, user);
+export const DELETE = withProjectAuth(async (_req, { params }) => {
   await prisma.project.delete({ where: { id: params.projectId } });
   return NextResponse.json({ ok: true });
 });

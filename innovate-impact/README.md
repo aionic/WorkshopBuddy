@@ -21,7 +21,7 @@ This is the MVP demo build of Workshop Buddy. It is a single Next.js + TypeScrip
 - Next.js 14 (App Router) + React + TypeScript + Tailwind
 - Prisma ORM against **Azure Database for PostgreSQL Flexible Server** with Microsoft Entra-only authentication (`passwordAuth: Disabled`) via the `@prisma/adapter-pg` driver adapter and `@azure/identity` token refresh
 - AI provider abstraction supporting **Azure AI Foundry (gpt-5.4, Entra auth)**, **Azure OpenAI**, **OpenAI**, and a deterministic **demo fallback**
-- 11-agent orchestrator (Intake → Pain Points → Business Impact → Solution Concept → Architecture → KPIs → Roadmap → Executive Story → Packager → Application Spec → Review). Every agent has its own dedicated system prompt and JSON output schema — see [`agent-prompts.md`](./agent-prompts.md). The **Custom instructions** field on the Agent Workflow page is injected into every agent's user prompt for that run.
+- 11-agent orchestrator (Intake → Pain Points → Business Impact → Solution Concept → Architecture → KPIs → Roadmap → Executive Story → Packager → Application Spec → Review). Every agent has its own dedicated system prompt and JSON output schema — see [`src/lib/agents/agent-prompts.ts`](./src/lib/agents/agent-prompts.ts) (canonical). The **Custom instructions** field on the Agent Workflow page is injected into every agent's user prompt for that run.
 - **Transcript Intake Agent** (new): paste a Teams transcript or upload a `.docx` / `.pdf` / `.vtt` / `.srt` / `.txt` / `.md` discovery doc and the agent proposes up to 50 categorized, persona-tagged candidate cards with evidence quotes and confidence scores. Facilitators review, edit, and bulk-accept into the workshop board — nothing is written until approved. Falls back to a deterministic regex extractor when no AI provider is configured.
 - Seven artifact outputs: **Impact Statement**, **Executive Briefing Deck**, **Solution Map**, **90-Day Execution Plan**, **Trends White Paper**, **KPI Framework**, and **Application Spec** — a developer-grade "vibe coding" brief (app type, tech stack, UI/UX principles, starter Copilot prompts, phased build plan) ready to paste into VS Code with GitHub Copilot. The Application Spec depends on the Solution Map, which is auto-included as a prerequisite when selected.
 - Artifact rendering for **Markdown**, **DOCX** (`docx`), and **PPTX** (`pptxgenjs`)
@@ -186,7 +186,7 @@ The modal then shows a reviewable grid: filter by category, edit inline, drop ba
 
 When no AI provider is configured (`DEMO_MODE=true` or `AI_PROVIDER` unset) the agent transparently falls back to a deterministic regex-based extractor so demos work offline.
 
-A sample transcript is checked in at [`../ConceptDocs/sample-transcript.md`](../ConceptDocs/sample-transcript.md) for quick testing.
+A sample transcript is checked in at [`../docs/sample-transcript.md`](../docs/sample-transcript.md) for quick testing.
 
 ---
 

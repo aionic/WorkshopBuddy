@@ -3,6 +3,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { Pool, type PoolConfig } from "pg";
 import { execSync } from "child_process";
 import { DefaultAzureCredential, type TokenCredential } from "@azure/identity";
+import { env } from "./env";
 
 // =====================================================================
 // Prisma client wired to Azure Database for PostgreSQL Flexible Server
@@ -56,7 +57,10 @@ function buildPrisma(): PrismaClient {
   if (!url) throw new Error("DATABASE_URL is not set");
 
   const parsed = parsePgUrl(url);
-  const useAzCli = !process.env.AZURE_CLIENT_ID;
+  // S-8: explicit credential-mode switch sourced from validated env.
+  // "cli"          → local dev, pre-fetched az CLI token (string password).
+  // "managed-identity" / "default" → ACA, async DefaultAzureCredential.
+  const useAzCli = env.credentialMode === "cli";
 
   // Local dev: pre-fetch token, use string password, rebuild pool every 50 min.
   if (useAzCli) {

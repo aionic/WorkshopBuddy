@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { withAuth } from "@/lib/auth";
+import { parseBody } from "@/lib/api/parse-body";
+import { projectCreateSchema } from "@/lib/api/schemas";
 
 export const dynamic = "force-dynamic";
 
@@ -14,25 +16,23 @@ export const GET = withAuth(async (_req, user) => {
 });
 
 export const POST = withAuth(async (req, user) => {
-  const body = await req.json();
-  if (!body?.name || !body?.businessProblem) {
-    return NextResponse.json({ error: "name and businessProblem are required" }, { status: 400 });
-  }
+  const parsed = await parseBody(req, projectCreateSchema);
+  if (parsed instanceof NextResponse) return parsed;
   const project = await prisma.project.create({
     data: {
       ownerId: user.oid,
-      name: body.name,
-      clientName: body.clientName ?? null,
-      tpid: body.tpid ?? null,
-      msxOppId: body.msxOppId ?? null,
-      industry: body.industry ?? null,
-      businessProblem: body.businessProblem,
-      desiredOutcomes: JSON.stringify(body.desiredOutcomes ?? []),
-      targetAudience: JSON.stringify(body.targetAudience ?? []),
+      name: parsed.name,
+      clientName: parsed.clientName ?? null,
+      tpid: parsed.tpid ?? null,
+      msxOppId: parsed.msxOppId ?? null,
+      industry: parsed.industry ?? null,
+      businessProblem: parsed.businessProblem,
+      desiredOutcomes: JSON.stringify(parsed.desiredOutcomes ?? []),
+      targetAudience: JSON.stringify(parsed.targetAudience ?? []),
       selectedArtifacts: JSON.stringify(
-        body.selectedArtifacts ?? ["Impact Statement", "Executive Briefing Deck", "Solution Map", "90-Day Execution Plan"]
+        parsed.selectedArtifacts ?? ["Impact Statement", "Executive Briefing Deck", "Solution Map", "90-Day Execution Plan"]
       ),
-      timeHorizon: body.timeHorizon ?? null,
+      timeHorizon: parsed.timeHorizon ?? null,
       status: "Active"
     }
   });
