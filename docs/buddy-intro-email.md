@@ -1,6 +1,6 @@
 # Workshop Buddy — Intro for the Microsoft Sales Team
 
-![Workshop Buddy](./innovate-impact/public/workshop-buddy-logo.png)
+![Workshop Buddy](../public/workshop-buddy-logo.png)
 
 **Live demo:** <https://workshopbuddy-app.salmonbush-45627890.eastus.azurecontainerapps.io>
 **Repo:** <https://github.com/jamesbas/WorkshopBuddy>

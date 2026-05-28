@@ -59,6 +59,18 @@ export const inputBatchSchema = z.object({
 });
 export type InputBatch = z.infer<typeof inputBatchSchema>;
 
+/**
+ * Envelope schema for /inputs/batch. We validate the OUTER shape strictly
+ * with zod (so malformed bodies return 400 early), but keep `items` as
+ * unknown[] so the route can `safeParse` each item individually and
+ * report partial errors instead of rejecting the whole batch.
+ */
+export const inputBatchEnvelopeSchema = z.object({
+  items: z.array(z.unknown()).min(1).max(100),
+  transcriptIngestId: z.string().min(1).optional(),
+});
+export type InputBatchEnvelope = z.infer<typeof inputBatchEnvelopeSchema>;
+
 // ---------- AgentRun ----------
 
 export const agentRunCreateSchema = z.object({
@@ -89,8 +101,22 @@ export type ArtifactRegenerate = z.infer<typeof artifactRegenerateSchema>;
 
 // ---------- Transcript extract (JSON variant; multipart handled in-route) ----------
 
+/**
+ * Pasted transcript JSON branch. Cap at 1 MB of characters (≈ the
+ * BACKLOG P0-5 acceptance criterion). Over-length pasted text is
+ * surfaced to the user with a 413 in the route, not a generic 400.
+ */
+export const TRANSCRIPT_TEXT_MAX_CHARS = 1_048_576;
+
 export const transcriptExtractJsonSchema = z.object({
-  text: trimmedString(2_000_000),
+  text: z.string().trim().min(1).max(TRANSCRIPT_TEXT_MAX_CHARS),
   hints: z.string().max(2000).optional(),
 });
 export type TranscriptExtractJson = z.infer<typeof transcriptExtractJsonSchema>;
+
+/**
+ * Multipart branch: only the `hints` text field needs zod; `file` and
+ * `text` are pulled directly from FormData and length-checked by the
+ * transcript parser (10 MB file cap) and TRANSCRIPT_TEXT_MAX_CHARS.
+ */
+export const transcriptExtractFormHintsSchema = z.string().max(2000);

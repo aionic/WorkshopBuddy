@@ -1,6 +1,12 @@
-﻿# InnovateImpact.md
+﻿# Application Requirements Specification: Workshop Buddy
 
-# Application Requirements Specification: Workshop Buddy
+> **Historical document.** This is the original product requirements spec that drove the MVP build. Keep it for context, but treat the live codebase + [../architecture.md](../architecture.md) / [../agents.md](../agents.md) / [../azure-architecture.md](../azure-architecture.md) / [../deployment.md](../deployment.md) as the source of truth. Things that have since diverged from this spec:
+>
+> - **Folder layout** — the app lives at the repo root, not under `innovate-impact/`. Section 16 below is historical.
+> - **Database** — Azure Postgres Flexible Server (Entra-only) instead of SQLite/Azure SQL.
+> - **Agents** — 11 agents shipped (Application Spec Agent added alongside the 10 in §8). Transcript Intake Agent runs as a side-path on Workshop Studio.
+> - **Background runs** — orchestrator runs in a Service Bus-backed Container Apps Job, not inline in the API route.
+> - **Auth** — single-tenant Entra Easy Auth at the ACA platform layer, not stubbed.
 
 **Application name:** Workshop Buddy  
 **Working codename:** InnovateImpact  

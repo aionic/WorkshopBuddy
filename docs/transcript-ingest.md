@@ -215,8 +215,8 @@ The `CATEGORIES` / `PERSONAS` / `PRIORITIES` arrays are currently defined inside
 | `package.json` | edit | Add deps: `mammoth` (~MIT, ~3 MB), `pdf-parse` (~MIT, ~1 MB). Keep them as direct deps so they're bundled into the Container App image. |
 | `prisma/schema.prisma` | **(optional v1.1)** | Add a `TranscriptIngest` audit row (id, projectId, source filename, charLength, cardCount, createdAt) for visibility. **Not required for v1.** |
 | `src/app/help/page.tsx` | edit | Add a short "Import from transcript" section to the facilitator playbook. |
-| `innovate-impact/agent-prompts.md` | edit | Document the Transcript Intake Agent alongside the existing 11. |
-| `README.md` (both root and `innovate-impact/`) | edit | One-paragraph note + screenshot placeholder. |
+| `src/lib/agents/agent-prompts.ts` | edit | Document the Transcript Intake Agent alongside the existing 11. |
+| `README.md` | edit | One-paragraph note + screenshot placeholder. |
 
 No changes required to the 11-agent orchestrator — once the rows are written via `createMany`, the downstream workflow consumes them exactly as it does manually-entered cards.
 

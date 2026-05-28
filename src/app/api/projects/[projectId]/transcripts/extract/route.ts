@@ -7,6 +7,12 @@ import {
 } from "@/lib/transcripts/parse";
 import { runTranscriptIntakeAgent } from "@/lib/agents/transcript-intake";
 import { withProjectAuth } from "@/lib/auth";
+import { parseBody } from "@/lib/api/parse-body";
+import {
+  TRANSCRIPT_TEXT_MAX_CHARS,
+  transcriptExtractFormHintsSchema,
+  transcriptExtractJsonSchema,
+} from "@/lib/api/schemas";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -53,7 +59,17 @@ export const POST = withProjectAuth(async (req, { params }) => {
       const form = await req.formData();
       const file = form.get("file");
       const pastedText = form.get("text");
-      hints = typeof form.get("hints") === "string" ? (form.get("hints") as string) : undefined;
+      const rawHints = form.get("hints");
+      if (typeof rawHints === "string") {
+        const parsed = transcriptExtractFormHintsSchema.safeParse(rawHints);
+        if (!parsed.success) {
+          return NextResponse.json(
+            { error: `hints: ${parsed.error.issues[0]?.message ?? "invalid"}` },
+            { status: 400 },
+          );
+        }
+        hints = parsed.data || undefined;
+      }
 
       if (file instanceof File && file.size > 0) {
         const parsed = await parseTranscriptUpload(file);
@@ -62,6 +78,14 @@ export const POST = withProjectAuth(async (req, { params }) => {
         filename = parsed.filename;
         source = "upload";
       } else if (typeof pastedText === "string" && pastedText.trim()) {
+        if (pastedText.length > TRANSCRIPT_TEXT_MAX_CHARS) {
+          return NextResponse.json(
+            {
+              error: `Pasted transcript exceeds the ${TRANSCRIPT_TEXT_MAX_CHARS.toLocaleString()} character limit. Upload as a file instead.`,
+            },
+            { status: 413 },
+          );
+        }
         const parsed = parsePastedText(pastedText);
         text = parsed.text;
         format = parsed.format;
@@ -69,11 +93,22 @@ export const POST = withProjectAuth(async (req, { params }) => {
         return NextResponse.json({ error: "No file or text provided" }, { status: 400 });
       }
     } else {
-      const body = await req.json().catch(() => null);
-      if (!body || typeof body !== "object" || typeof body.text !== "string" || !body.text.trim()) {
-        return NextResponse.json({ error: "Body must include non-empty `text`" }, { status: 400 });
+      // JSON branch — fast 413 on length before zod so the user sees the
+      // right error, then schema validation handles everything else.
+      const contentLength = Number(req.headers.get("content-length") ?? 0);
+      if (contentLength > TRANSCRIPT_TEXT_MAX_CHARS + 4096) {
+        return NextResponse.json(
+          {
+            error: `Pasted transcript exceeds the ${TRANSCRIPT_TEXT_MAX_CHARS.toLocaleString()} character limit. Upload as a file instead.`,
+          },
+          { status: 413 },
+        );
       }
-      hints = typeof body.hints === "string" ? body.hints : undefined;
+
+      const body = await parseBody(req, transcriptExtractJsonSchema);
+      if (body instanceof NextResponse) return body;
+
+      hints = body.hints;
       const parsed = parsePastedText(body.text);
       text = parsed.text;
       format = parsed.format;

@@ -1,96 +1,77 @@
 <div align="center">
 
-<img src="./innovate-impact/public/workshop-buddy-logo.png" alt="Workshop Buddy" width="240" />
+<img src="./public/workshop-buddy-logo.png" alt="Workshop Buddy" width="240" />
 
 # Workshop Buddy
 
 **Delivering AI-Powered Solution Design at Enterprise Speed.**
 
+[![Next.js](https://img.shields.io/badge/Next.js-14.2-black?logo=next.js&logoColor=white)](https://nextjs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![Node.js](https://img.shields.io/badge/Node.js-20%2B-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Prisma](https://img.shields.io/badge/Prisma-5.22-2D3748?logo=prisma&logoColor=white)](https://www.prisma.io/)
+[![Azure Container Apps](https://img.shields.io/badge/Azure-Container%20Apps-0078D4?logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/products/container-apps)
+[![Azure AI Foundry](https://img.shields.io/badge/Azure%20AI-Foundry-7E57C2?logo=microsoftazure&logoColor=white)](https://ai.azure.com/)
+[![azd](https://img.shields.io/badge/Deploy-azd%20up-1f6feb?logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/azure/developer/azure-developer-cli/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Built with GitHub Copilot](https://img.shields.io/badge/Built%20with-GitHub%20Copilot-8957e5?logo=github&logoColor=white)](https://github.com/features/copilot)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](#contributing)
+
+**Maintained by** [@jamesbas](https://github.com/jamesbas) · [@aionic](https://github.com/aionic)
+
 </div>
 
-> Turn live discovery conversations into executive-ready solution artifacts in minutes — impact statements, executive briefings, solution maps, 90-day execution plans, KPI frameworks, trend white papers, and a developer-ready **Application Spec** for vibe coding a working prototype with VS Code + GitHub Copilot.
+Turn live discovery conversations into executive-ready solution artifacts in minutes — impact statements, executive briefings, solution maps, 90-day execution plans, KPI frameworks, trend white papers, and developer-ready **Application Spec** briefs for vibe coding in VS Code + GitHub Copilot.
 
-This is the MVP demo build of Workshop Buddy. It is a single Next.js + TypeScript application backed by **Azure Database for PostgreSQL Flexible Server** (via Prisma + driver adapter, Entra-only auth) and runs locally or on Azure Container Apps.
-
-> Hosted and maintained by **Microsoft**. Live demo: <https://workshopbuddy-app.salmonbush-45627890.eastus.azurecontainerapps.io>
+> Hosted by **Microsoft**. Single Next.js + TypeScript app, Prisma + Azure Postgres Flexible Server (Entra-only), 11-agent orchestrator behind a Service Bus queue, packaged for Azure Container Apps.
 
 ---
 
-## ✨ What's included
+## Quickstart (5 minutes, demo mode)
 
-- Next.js 14 (App Router) + React + TypeScript + Tailwind
-- Prisma ORM against **Azure Database for PostgreSQL Flexible Server** with Microsoft Entra-only authentication (`passwordAuth: Disabled`) via the `@prisma/adapter-pg` driver adapter and `@azure/identity` token refresh
-- AI provider abstraction supporting **Azure AI Foundry (gpt-5.4, Entra auth)**, **Azure OpenAI**, **OpenAI**, and a deterministic **demo fallback**
-- 11-agent orchestrator (Intake → Pain Points → Business Impact → Solution Concept → Architecture → KPIs → Roadmap → Executive Story → Packager → Application Spec → Review). Every agent has its own dedicated system prompt and JSON output schema — see [`innovate-impact/src/lib/agents/agent-prompts.ts`](./innovate-impact/src/lib/agents/agent-prompts.ts) (canonical). The **Custom instructions** field on the Agent Workflow page is injected into every agent's user prompt for that run.
-- **Transcript Intake Agent** (new): paste a Teams transcript or upload a `.docx` / `.pdf` / `.vtt` / `.srt` / `.txt` / `.md` discovery doc and the agent proposes up to 50 categorized, persona-tagged candidate cards with evidence quotes and confidence scores. Facilitators review, edit, and bulk-accept into the workshop board — nothing is written until approved. Falls back to a deterministic regex extractor when no AI provider is configured.
-- Seven artifact outputs: **Impact Statement**, **Executive Briefing Deck**, **Solution Map**, **90-Day Execution Plan**, **Trends White Paper**, **KPI Framework**, and **Application Spec** — a developer-grade "vibe coding" brief (app type, tech stack, UI/UX principles, starter Copilot prompts, phased build plan) ready to paste into VS Code with GitHub Copilot. The Application Spec depends on the Solution Map, which is auto-included as a prerequisite when selected.
-- Artifact rendering for **Markdown**, **DOCX** (`docx`), and **PPTX** (`pptxgenjs`)
-- Polished AI-studio UX: dashboard, project intake wizard, workshop board, agent workflow canvas, artifact workspace with versioning and regeneration, and an in-app **Help** section
-- Seed project: *OCR to GenAI Document Intelligence Modernization*
-- `/api/health` endpoint, Dockerfile, and `docker-compose.yml`
-
----
-
-## 🚀 Local quickstart
-
-Requires Node.js 20+ and `az login` against the Microsoft tenant that owns the Postgres server (so `DefaultAzureCredential` can mint an Entra token).
+Requires Node.js 20+. No Azure account needed for demo mode.
 
 ```bash
-cp .env.example .env       # (optional) set AI provider keys
-npm install                # installs deps and runs `prisma generate`
-npm run db:push            # pushes schema to Postgres (workshopbuddy db)
-npm run db:seed            # seeds the demo project
+git clone <this-repo> WorkshopBuddy
+cd WorkshopBuddy
+cp .env.example .env       # leave AI_PROVIDER unset for demo mode
+npm install                # runs `prisma generate`
 npm run dev                # http://localhost:3000
 ```
 
-The default `DATABASE_URL` in `.env` points at `pg-workshopbuddy-wus3.postgres.database.azure.com` / `workshopbuddy` with **no password** — the Prisma client picks up an Entra access token via `@azure/identity` and uses it as the Postgres password on every new pool connection (so 1h token expiry is handled transparently).
+You'll see the seeded **OCR to GenAI Document Intelligence Modernization** project. Click **Open** → **Workshop** → add inputs → **Run Full Workflow** → preview & download artifacts.
 
-Whoever runs `npm run db:push` locally needs:
+In demo mode the orchestrator produces deterministic content grounded in your workshop inputs — every screen and download works end-to-end without any AI keys.
 
-1. `az login` against the right tenant.
-2. Their Entra account configured as a Postgres Entra admin on the server (currently `admin@MngEnvMCAP365575.onmicrosoft.com` and the `workshopbuddy-uami` managed identity are both Entra admins).
-3. Their public IP allowed through the Postgres firewall (`deploy.ps1` adds the rule automatically; manually:
-   `az postgres flexible-server firewall-rule create -g rgWorkshopBuddy -n pg-workshopbuddy-wus3 --rule-name my-dev --start-ip-address <ip> --end-ip-address <ip>`).
+> **Note:** the default `DATABASE_URL` in [.env.example](.env.example) points at the live Azure Postgres server. For purely local dev with no Azure dependency, point `DATABASE_URL` at a local Postgres instance and run `npm run db:push && npm run db:seed`.
 
-For `prisma db push` to authenticate, the CLI needs the token embedded in the URL:
+---
 
-```powershell
-$t = az account get-access-token --resource https://ossrdbms-aad.database.windows.net --query accessToken -o tsv
-$env:DATABASE_URL = "postgresql://admin%40MngEnvMCAP365575.onmicrosoft.com:$t@pg-workshopbuddy-wus3.postgres.database.azure.com:5432/workshopbuddy?sslmode=require"
-npx prisma db push
-```
+## Quickstart with AI
 
-Open <http://localhost:3000> and you'll see the seeded project on the dashboard. Click **Open** → **Workshop** → add inputs → **Run Full Workflow** → preview and download artifacts in **Artifacts**.
+Pick one provider, drop into `.env`, restart `npm run dev`.
 
-### Without AI keys
-
-If no AI provider is configured, the studio runs in **demo mode** with deterministic synthesis grounded in the workshop inputs. Every screen — including the agent workflow and artifact downloads — works end-to-end.
-
-### With Azure AI Foundry (gpt-5.4, Entra-only — no API keys)
-
-This is the **recommended** path for the demo. The Foundry project at `jamesbas-demo-project-resource` (in resource group `rg-jamesbas-demo-project`) allows only Entra ID authentication.
-
-Set in `.env`:
+### Azure AI Foundry (recommended — Entra-only, no API keys)
 
 ```bash
 AI_PROVIDER=azure_foundry
-AZURE_FOUNDRY_RESPONSES_ENDPOINT=https://jamesbas-demo-project-resource.services.ai.azure.com/api/projects/jamesbas-demo-project/openai/v1/responses
+AZURE_FOUNDRY_RESPONSES_ENDPOINT=https://<account>.services.ai.azure.com/api/projects/<project>/openai/v1/responses
 AZURE_FOUNDRY_MODEL=gpt-5.4
 ```
 
-The app uses [`DefaultAzureCredential`](https://learn.microsoft.com/azure/developer/javascript/sdk/credential-chains) to obtain a bearer token for the `https://ai.azure.com/.default` scope. Locally that picks up `az login` / VS Code / environment credentials; in Azure Container Apps it uses the user-assigned managed identity `workshopbuddy-uami`, which the Bicep template grants **Cognitive Services User** on the Foundry account.
+Uses `DefaultAzureCredential` against the `https://ai.azure.com/.default` scope (`az login` locally; UAMI in ACA).
 
-### With Azure OpenAI (key-based)
+### Azure OpenAI (key)
 
 ```bash
 AI_PROVIDER=azure_openai
-AZURE_OPENAI_ENDPOINT=https://<your-resource>.openai.azure.com
+AZURE_OPENAI_ENDPOINT=https://<resource>.openai.azure.com
 AZURE_OPENAI_API_KEY=<key>
-AZURE_OPENAI_DEPLOYMENT=<deployment-name>      # e.g. gpt-4o
+AZURE_OPENAI_DEPLOYMENT=gpt-4o
 AZURE_OPENAI_API_VERSION=2024-08-01-preview
 ```
 
-### With OpenAI
+### OpenAI
 
 ```bash
 AI_PROVIDER=openai
@@ -100,138 +81,109 @@ OPENAI_MODEL=gpt-4o-mini
 
 ---
 
-## 🐳 Docker
+## Deploy to Azure (one command)
+
+Requires the [Azure Developer CLI](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) and `az login`.
 
 ```bash
-docker compose up --build
-# → http://localhost:3000
+azd up
+```
+
+That provisions a fresh resource group `rg-<env-name>` with everything from scratch: ACR, Log Analytics, Container Apps environment, User-Assigned Managed Identity, Postgres Flexible Server (Entra-only), Azure AI Foundry account + model deployment, Service Bus namespace + `agent-runs` queue, web Container App + worker/sweeper Container Apps Jobs, and Entra Easy Auth (single-tenant app registration + redirect URI). See [docs/deployment.md](docs/deployment.md) for the full walkthrough, hooks, and rollback procedure.
+
+Subsequent deploys: `azd deploy` builds + pushes a new image, the `predeploy` hook runs `prisma migrate deploy`, and the `postdeploy` hook re-tags worker and sweeper to the new image.
+
+```bash
+docker compose up --build   # local container, http://localhost:3000
 ```
 
 ---
 
-## ☁️ Azure Container Apps — one-command deploy to `rgWorkshopBuddy`
-
-Bicep + a PowerShell wrapper provision/refresh everything in resource group **`rgWorkshopBuddy`**:
-
-- Azure Container Registry (ACR)
-- Log Analytics workspace + Container Apps environment
-- User-Assigned Managed Identity (`workshopbuddy-uami`) for ACR pulls, Foundry, and Azure Postgres
-- **Azure Database for PostgreSQL Flexible Server `pg-workshopbuddy-wus3`** in `westus3`, Burstable `Standard_B1ms`, 32 GB storage, PG 16, **Entra-only auth** (`activeDirectoryAuth: Enabled`, `passwordAuth: Disabled`), with database `workshopbuddy`
-- Firewall rules: `AllowAzureServices` + `AllowDevWorkstation` (your current IP)
-- The Container App `workshopbuddy-app`, identity-bound to the UAMI, with `DATABASE_URL` pre-wired to the Postgres FQDN (the container's `start.js` fetches an Entra access token at boot)
-- RBAC: `AcrPull` on the registry + `Cognitive Services User` on the Foundry account `jamesbas-demo-project-resource` (cross-RG assignment) + **Postgres Entra admin** for the UAMI on the Flexible Server (declared via the Bicep `administrators` sub-resource — no T-SQL bootstrap required)
-
-```powershell
-# from innovate-impact/
-az login
-az account set --subscription <SUBSCRIPTION_ID>
-./infra/deploy.ps1                                                # uses defaults (rgWorkshopBuddy, eastus container app, westus3 PG)
-# or override:
-./infra/deploy.ps1 -ResourceGroup rgWorkshopBuddy -Location eastus -ImageTag v1
-```
-
-The script:
-
-1. Verifies `rgWorkshopBuddy` exists.
-2. Runs `az deployment group create` on [`infra/main.bicep`](innovate-impact/infra/main.bicep) to bootstrap ACR, the Container Apps environment, the Postgres Flexible Server + `workshopbuddy` database, and the managed identity (the UAMI is added as a Postgres Entra admin via the Bicep `administrators` sub-resource).
-3. Builds & pushes the image with `az acr build` (no local Docker required).
-4. Re-deploys Bicep with the new image tag to provision/update the Container App.
-5. Ensures Postgres Entra admins via `az postgres flexible-server microsoft-entra-admin` (idempotent).
-6. Prints the public HTTPS URL of the app, the Postgres server FQDN, and the database name.
-
-> The deploying principal needs **Contributor** on `rgWorkshopBuddy` *and* permission to create role assignments on the Foundry resource group `rg-jamesbas-demo-project` (Owner / User Access Administrator). RBAC propagation can take a couple of minutes after the first deployment.
-
-### How the Azure Postgres piece works
-
-- **Server**: `pg-workshopbuddy-wus3.postgres.database.azure.com` (westus3) — declared in `infra/main.bicep` with `Microsoft.DBforPostgreSQL/flexibleServers@2024-08-01`, `activeDirectoryAuth: Enabled`, `passwordAuth: Disabled`.
-- **Database**: `workshopbuddy` (UTF8 / en_US.utf8).
-- **Firewall**: `AllowAzureServices` (the Container App's egress) + an optional `AllowDevWorkstation` rule with your public IP for local development.
-- **App connection string**:
-  ```
-  postgresql://workshopbuddy-uami@pg-workshopbuddy-wus3.postgres.database.azure.com:5432/workshopbuddy?sslmode=require
-  ```
-  No password is embedded; the password is an Entra access token fetched at runtime by `@azure/identity` (scope `https://ossrdbms-aad.database.windows.net/.default`). The Prisma client in `src/lib/db.ts` is built with `@prisma/adapter-pg` against a `pg.Pool` whose password is an async callback — every new pool connection picks up a fresh token, so 1h token expiry is transparent.
-- **Schema migrations + seed**: the container's `CMD` is `node start.js`, which (a) fetches an Entra access token, (b) injects it into `DATABASE_URL` for the Prisma CLI, (c) runs `prisma db push --accept-data-loss`, (d) runs `prisma/seed.js` (idempotent), then (e) starts the Next.js standalone server.
-
-> **Cost saver:** the Postgres Flexible Server can be stopped (`az postgres flexible-server stop -g rgWorkshopBuddy -n pg-workshopbuddy-wus3`) when not in use. Re-run `deploy.ps1` after starting it with `... start ...` — the script will fail with `UpsertServerManagementOperationComputeOnlySupportForStoppedServer` until the server is back in **Ready** state.
-
-### Manual / advanced
-
-If you want to deploy with raw CLI commands instead of `deploy.ps1`, see [`infra/main.bicep`](innovate-impact/infra/main.bicep) for all parameters. The container exposes `/api/health` for liveness / readiness probes.
-
----
-
-## 🎙️ Import from transcript
-
-Facilitators rarely have time to retype a 60-minute discovery call into workshop cards. The **Import from transcript** button on the Workshop Studio page accepts:
-
-- **Pasted text** (Teams / Zoom / Meet / notes) — minimum 60 characters.
-- **File upload** (10 MB max): `.txt`, `.md`, `.markdown`, `.vtt`, `.srt`, `.docx`, `.pdf`.
-
-The **Transcript Intake Agent** ([`innovate-impact/src/lib/agents/transcript-intake.ts`](innovate-impact/src/lib/agents/transcript-intake.ts)) parses the input (timestamps and speaker prefixes are stripped for captions), then asks the configured LLM to return up to **50** candidate cards — each with `category`, optional `persona`, `priority`, `content`, a short `evidence` quote pulled from the transcript, and a `confidence` score. Optional facilitator hints (e.g. *“audience is the CFO, lead with cost reduction”*) are appended to the prompt.
-
-The modal then shows a reviewable grid: filter by category, edit inline, drop bad rows, bulk-select, and commit. Selected cards are written via `POST /api/projects/[id]/inputs/batch` in a single Prisma transaction. Every extraction is logged to the new `TranscriptIngest` audit table (source, format, char length, cards proposed/accepted, LLM used, optional error) and each resulting `WorkshopInput` is linked back to its `transcriptIngestId` for provenance.
-
-When no AI provider is configured (`DEMO_MODE=true` or `AI_PROVIDER` unset) the agent transparently falls back to a deterministic regex-based extractor so demos work offline.
-
-A sample transcript is checked in at [`docs/sample-transcript.md`](docs/sample-transcript.md) for quick testing.
-
----
-
-## 🧩 Project structure
+## Repository layout
 
 ```text
-src/
-  app/
-    page.tsx                         # Dashboard
-    projects/                        # Projects, intake, detail, workshop, agents, artifacts
-    workshop/  agents/  artifacts/   # Top-level shortcut pages
-    help/                            # In-app user guide (facilitator playbook)
-    settings/                        # Provider & demo settings
-    api/                             # REST endpoints
-  components/                        # AppShell, UI primitives, intake wizard, workshop, agents, artifacts
-  lib/
-    ai/provider.ts                   # Provider abstraction (Foundry / Azure OpenAI / OpenAI / mock)
-    agents/orchestrator.ts           # 11-agent workflow + artifact packager + Application Spec agent
-    agents/agent-prompts.ts          # Per-agent system prompt + JSON schema (canonical)
-    agents/transcript-intake.ts      # Transcript Intake Agent (LLM + deterministic fallback)
-    transcripts/parse.ts             # Multi-format transcript parser (docx/pdf/vtt/srt/txt/md)
-    workshop-enums.ts                # Shared CATEGORIES / PERSONAS / PRIORITIES + type guards
-    artifacts/                       # Markdown / DOCX / PPTX renderers + schemas
-    prompts/                         # System and packager prompts (Markdown)
-    db.ts utils.ts
-prisma/
-  schema.prisma  seed.ts
-public/
-  workshop-buddy-logo.png            # Branding (sidebar + Help page)
-  microsoft-logo.svg                 # Microsoft attribution (sidebar footer)
-infra/
-  main.bicep  main.bicepparam  deploy.ps1
-  modules/foundry-role.bicep         # Cross-RG role assignment on Foundry
+.
+├── azure.yaml                       # azd service + hooks
+├── Dockerfile                       # multi-stage Next.js standalone build
+├── start.js                         # container boot: probe DB → seed → next start
+├── infra/                           # Bicep (subscription-scope main.bicep + resources.bicep)
+├── prisma/
+│   ├── schema.prisma
+│   ├── migrations/                  # versioned migrations (P0-3)
+│   └── seed.{ts,js}                 # idempotent demo project seed
+├── public/                          # logos, branding
+├── scripts/                         # foundry-probe, pg-probe, list-tables, with-utf8 wrapper
+├── src/
+│   ├── app/                         # Next.js App Router (pages + /api routes)
+│   ├── components/                  # AppShell, intake wizard, workshop board, agent canvas, artifact workspace
+│   └── lib/
+│       ├── agents/                  # orchestrator, agent-prompts, transcript-intake, queue, persist-artifacts
+│       ├── ai/provider.ts           # Foundry / Azure OpenAI / OpenAI / mock provider abstraction
+│       ├── api/                     # parse-body, schemas (zod), response helpers
+│       ├── artifacts/               # markdown/docx/pptx renderers + artifact schemas
+│       ├── prompts/                 # system + packager prompts (Markdown)
+│       ├── transcripts/parse.ts     # docx/pdf/vtt/srt/txt/md transcript parser
+│       ├── auth.ts                  # Easy Auth header decode + access helpers
+│       ├── db.ts                    # Prisma + driver adapter w/ Entra token refresh
+│       ├── env.ts                   # lazy zod env proxy
+│       └── workshop-enums.ts        # CATEGORIES / PERSONAS / PRIORITIES
+├── worker/
+│   ├── agent-run-worker.ts          # Service Bus consumer (Container Apps Job)
+│   └── sweeper.js                   # cron job: marks stuck Running runs as Failed
+└── docs/
+    ├── architecture.md              # code structure + data flow + auth model
+    ├── agents.md                    # 11-agent orchestration + handoff Mermaid
+    ├── ui-flows.md                  # primary nav + workshop → agents → artifacts flow
+    ├── azure-architecture.md        # ACA + Postgres + Foundry + Service Bus topology
+    ├── deployment.md                # azd walkthrough + Bicep notes + rollback
+    ├── transcript-ingest.md         # transcript intake design + format support
+    ├── samples/                     # sample transcripts for live demos
+    └── spec/InnovateImpact.md       # full product requirements spec
 ```
 
----
-
-## ✅ Acceptance criteria coverage
-
-| # | Criterion | Status |
-|---|---|---|
-| 1-3 | Create project, intake, workshop inputs | ✅ |
-| 4-5 | Run AI workflow, persist agent run | ✅ |
-| 6 | Generate Impact Statement, Briefing Deck, Solution Map, 90-Day Plan (and KPI / Trends / Application Spec) | ✅ |
-| 7-8 | Preview and edit Markdown | ✅ |
-| 9-10 | Download DOCX (docs) and PPTX (briefing deck) | ✅ |
-| 11 | Seeded OCR to GenAI demo project | ✅ |
-| 11a | Transcript ingest (paste + file upload, AI extraction, review & bulk-accept) | ✅ |
-| 12 | `npm run dev` | ✅ |
-| 13 | Docker build & run | ✅ |
-| 14 | README with local + ACA deployment | ✅ |
+See [docs/architecture.md](docs/architecture.md) for the architectural deep-dive and [docs/agents.md](docs/agents.md) for the agent flow diagram.
 
 ---
 
-## 🛡️ Notes
+## Documentation
 
-- AI-drafted content requires human review and approval before client use. This disclaimer appears in the UI and in every generated artifact.
+| Document | Purpose |
+| --- | --- |
+| [docs/architecture.md](docs/architecture.md) | Code structure, data flow, auth model, persistence |
+| [docs/agents.md](docs/agents.md) | 11-agent orchestrator + handoff Mermaid diagram |
+| [docs/ui-flows.md](docs/ui-flows.md) | Primary navigation + workshop-to-artifact user flow |
+| [docs/azure-architecture.md](docs/azure-architecture.md) | ACA + Postgres + Foundry + Service Bus topology |
+| [docs/deployment.md](docs/deployment.md) | `azd up` walkthrough, hooks, secrets, rollback |
+| [docs/transcript-ingest.md](docs/transcript-ingest.md) | Transcript Intake Agent design + formats |
+| [docs/buddy-intro-email.md](docs/buddy-intro-email.md) | Stakeholder intro email template |
+| [docs/spec/InnovateImpact.md](docs/spec/InnovateImpact.md) | Original product requirements spec |
+| [docs/samples/](docs/samples/) | Sample transcripts for live demos |
+
+---
+
+## Maintainers
+
+| | Maintainer | Focus |
+| --- | --- | --- |
+| <img src="https://avatars.githubusercontent.com/u/53447387?v=4" width="40" /> | [**@jamesbas**](https://github.com/jamesbas) | Product vision, agent design, Azure AI Foundry |
+| <img src="https://avatars.githubusercontent.com/u/9543466?v=4" width="40" /> | [**@aionic**](https://github.com/aionic) | Architecture, infra (Bicep/azd), DX |
+
+For issues, ideas, or PRs — tag a maintainer or open an issue. See [docs/architecture.md](docs/architecture.md) for the codebase tour before diving into a non-trivial change.
+
+## Contributing
+
+PRs welcome. Please:
+
+1. Open an issue first for anything larger than a bugfix.
+2. Run `npx tsc --noEmit` and `npm run lint` before pushing.
+3. Add or update a docs/ page if you change architecture, infra, or the agent graph.
+4. Use [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, `chore:`).
+
+---
+
+## Notes
+
+- AI-drafted content requires human review and approval before client use. The disclaimer appears in the UI and in every generated artifact.
 - API keys are read from environment variables only and are never logged.
-- The MVP intentionally omits enterprise auth, RBAC, and real-time collaboration.
+- The MVP intentionally omits enterprise RBAC, real-time collaboration, and approval workflows. See `BACKLOG.md` (local-only) for the prioritized backlog.
 - Hosted by **Microsoft**.
