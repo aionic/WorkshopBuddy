@@ -1,26 +1,38 @@
-# Base image is pulled from Microsoft Container Registry (MCR) instead of
-# Docker Hub to avoid anonymous Docker Hub pull rate limits hitting the shared
-# ACR build agent IPs. Azure Linux 3.0 node:20 image is roughly equivalent to
-# the official node:20 (Debian-based) image.
-ARG BASE_IMAGE=mcr.microsoft.com/azurelinux/base/nodejs:20
+# Base image: official Node 20 on Debian Bookworm slim. We previously used
+# `mcr.microsoft.com/azurelinux/base/nodejs:20` to dodge Docker Hub anonymous
+# pull rate limits on ACR shared build agents, but Azure Linux 3's libc / icu
+# combo segfaults Prisma 6's query-engine binary during `prisma generate`
+# (signal SIGSEGV at ~1s, both N-API and binary engineType). Debian slim is
+# Prisma's primary tested target and is fine on a developer machine. For ACR
+# remote builds, override at build time via `--build-arg BASE_IMAGE=...`.
+ARG BASE_IMAGE=node:20-bookworm-slim
 
 # --- deps ---
 FROM ${BASE_IMAGE} AS deps
 WORKDIR /app
-RUN tdnf install -y openssl ca-certificates && tdnf clean all
+# openssl / ca-certificates: required by @prisma/engines and HTTPS pulls.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
 # `npm ci` for reproducible installs from package-lock.json (faster than
 # `npm install`, fails fast on lockfile drift). BuildKit cache mount keeps
 # the npm cache warm across local rebuilds; ignored by ACR remote build but
 # harmless there.
+# --ignore-scripts skips the `postinstall: prisma generate` hook here; the
+# builder stage runs `prisma generate` explicitly after copying the full
+# source. Avoids a Prisma 6 segfault under Azure Linux 3 node:20 when
+# generate runs as a postinstall sub-shell.
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci --no-audit --no-fund
+    npm ci --no-audit --no-fund --ignore-scripts
 
 # --- build ---
 FROM ${BASE_IMAGE} AS builder
 WORKDIR /app
-RUN tdnf install -y openssl ca-certificates && tdnf clean all
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -33,7 +45,9 @@ RUN npm run build
 # --- runtime ---
 FROM ${BASE_IMAGE} AS runner
 WORKDIR /app
-RUN tdnf install -y openssl ca-certificates wget && tdnf clean all
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates wget \
+ && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=80

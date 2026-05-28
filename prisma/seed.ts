@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { Pool } from "pg";
 import { DefaultAzureCredential } from "@azure/identity";
 
 const PG_AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
@@ -13,7 +12,9 @@ function buildPrisma(): PrismaClient {
   const credential = new DefaultAzureCredential({
     managedIdentityClientId: process.env.AZURE_CLIENT_ID,
   });
-  const pool = new Pool({
+  // Prisma 6: PrismaPg owns the pool; pass pg connection config + async
+  // password callback (token refresh happens per new connection).
+  const adapter = new PrismaPg({
     host: u.hostname,
     port: u.port ? Number(u.port) : 5432,
     database: decodeURIComponent(u.pathname.replace(/^\//, "")),
@@ -24,8 +25,9 @@ function buildPrisma(): PrismaClient {
       if (!t?.token) throw new Error("Failed to acquire Entra token for Postgres");
       return t.token;
     },
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 300_000,
   });
-  const adapter = new PrismaPg(pool);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return new PrismaClient({ adapter } as any);
 }

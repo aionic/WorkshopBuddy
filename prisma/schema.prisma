@@ -1,11 +1,17 @@
 // Workshop Buddy - Prisma schema
 generator client {
-  provider        = "prisma-client-js"
-  // driverAdapters lets us plug in @prisma/adapter-pg, which is required
+  provider      = "prisma-client-js"
+  // Driver adapters (`@prisma/adapter-pg`) require the default "library"
+  // (N-API) query engine — `engineType = "binary"` is incompatible and
+  // throws `PrismaClientConstructorValidationError` at runtime.
+  // `debian-openssl-3.0.x` matches the runtime image (node:20-bookworm-slim).
+  // `native` covers local dev on Windows / macOS.
+  binaryTargets = ["native", "debian-openssl-3.0.x"]
+  // Note: `driverAdapters` graduated to stable in Prisma 6 and no longer
+  // needs to be listed under previewFeatures. We use @prisma/adapter-pg
   // to authenticate against Azure Database for PostgreSQL Flexible Server
-  // using a Microsoft Entra access token (the token is refreshed on each
-  // new pool connection via @azure/identity).
-  previewFeatures = ["driverAdapters"]
+  // using a Microsoft Entra access token (refreshed per pool connection
+  // via @azure/identity).
 }
 
 datasource db {

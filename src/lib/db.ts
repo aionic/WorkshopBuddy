@@ -1,6 +1,5 @@
 import { PrismaClient } from "@prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
-import { Pool, type PoolConfig } from "pg";
 import { execSync } from "child_process";
 import { DefaultAzureCredential, type TokenCredential } from "@azure/identity";
 import { env } from "./env";
@@ -14,20 +13,20 @@ import { env } from "./env";
 // The "password" is an Entra access token (scope
 //   https://ossrdbms-aad.database.windows.net/.default).
 //
-// Two paths:
-//   - Local dev (no AZURE_CLIENT_ID): pre-fetch the token synchronously
-//     via `az account get-access-token` and pass it as a STRING password
-//     on pg.Pool. The token is refreshed every 50 min by rebuilding the
-//     pool. (password-as-async-function caused intermittent
-//     "Connection terminated unexpectedly" with this version of pg/
-//     @prisma/adapter-pg under Next.js HMR.)
-//   - ACA (AZURE_CLIENT_ID set): use DefaultAzureCredential bound to the
-//     UAMI and pass an async function as the password so every new pool
-//     connection picks up a fresh token.
+// Prisma 6: PrismaPg now owns the pg.Pool — we pass pg connection config
+// directly and supply an async `password` callback. The pg driver invokes
+// the callback for every NEW pool connection, so token expiry is handled
+// transparently without manual pool churn.
+//
+// Two credential modes:
+//   - "cli"               → local dev, shells out to `az account get-access-token`
+//   - "managed-identity"  → ACA, DefaultAzureCredential bound to the UAMI
+// Both produce a string token, cached in-process until ~5 min before expiry.
 // =====================================================================
 
 const PG_AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
 const PG_AAD_RESOURCE = "https://ossrdbms-aad.database.windows.net";
+const REFRESH_LEAD_MS = 5 * 60_000;
 
 function parsePgUrl(url: string) {
   const u = new URL(url);
@@ -41,91 +40,78 @@ function parsePgUrl(url: string) {
   };
 }
 
-function getTokenSyncViaAzCli(): string {
-  // execSync goes through cmd.exe, which handles .cmd shims correctly on
-  // Windows (execFileSync('az.cmd', ...) raises EINVAL after Node's
-  // CVE-2024-27980 fix). Local dev only.
-  const out = execSync(
-    `az account get-access-token --resource ${PG_AAD_RESOURCE} --query accessToken -o tsv`,
-    { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
-  );
-  return out.trim();
+type CachedTok = { token: string; expiresOnMs: number };
+const tokenCache = new Map<string, CachedTok>();
+
+async function getCachedToken(
+  key: string,
+  fetcher: () => Promise<CachedTok>,
+): Promise<string> {
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresOnMs - Date.now() > REFRESH_LEAD_MS) {
+    return cached.token;
+  }
+  const fresh = await fetcher();
+  tokenCache.set(key, fresh);
+  return fresh.token;
 }
 
 function buildPrisma(): PrismaClient {
   const url = process.env.DATABASE_URL;
   if (!url) throw new Error("DATABASE_URL is not set");
-
   const parsed = parsePgUrl(url);
+
   // S-8: explicit credential-mode switch sourced from validated env.
-  // "cli"          → local dev, pre-fetched az CLI token (string password).
-  // "managed-identity" / "default" → ACA, async DefaultAzureCredential.
   const useAzCli = env.credentialMode === "cli";
 
-  // Local dev: pre-fetch token, use string password, rebuild pool every 50 min.
+  let getToken: () => Promise<string>;
   if (useAzCli) {
-    function buildPoolWithToken(token: string): Pool {
-      const config: PoolConfig = {
-        host: parsed.host,
-        port: parsed.port,
-        database: parsed.database,
-        user: parsed.user,
-        // Verify against Node's built-in Mozilla CA bundle (includes
-        // DigiCert Global Root G2, the root for *.postgres.database.azure.com).
-        // SNI hostname verification is on by default — passing no `ca`
-        // option is what enables system-root validation.
-        ssl: parsed.ssl ? { rejectUnauthorized: true } : false,
-        password: token,
-      };
-      const p = new Pool(config);
-      p.on("error", (err) => {
-        console.warn("[prisma-pg] idle client error:", err.message);
+    // Local dev: shell out to az CLI via cmd.exe (handles .cmd shims;
+    // execFileSync('az.cmd', ...) raises EINVAL after CVE-2024-27980).
+    getToken = () =>
+      getCachedToken("cli", async () => {
+        const out = execSync(
+          `az account get-access-token --resource ${PG_AAD_RESOURCE} --query "[accessToken,expiresOn]" -o tsv`,
+          { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+        );
+        const [token, expiresOn] = out.trim().split(/\s+/);
+        const expiresOnMs = Date.parse(expiresOn);
+        return {
+          token,
+          expiresOnMs: Number.isFinite(expiresOnMs)
+            ? expiresOnMs
+            : Date.now() + 50 * 60_000,
+        };
       });
-      return p;
-    }
-
-    let pool = buildPoolWithToken(getTokenSyncViaAzCli());
-    const adapter = new PrismaPg(pool);
-    const refresh = setInterval(() => {
-      try {
-        const newPool = buildPoolWithToken(getTokenSyncViaAzCli());
-        const oldPool = pool;
-        pool = newPool;
-        // @ts-expect-error PrismaPg holds the pool privately; swap it in.
-        adapter.pool = newPool;
-        oldPool.end().catch(() => {});
-      } catch (e) {
-        console.warn("[prisma-pg] token refresh failed:", (e as Error).message);
-      }
-    }, 50 * 60_000);
-    refresh.unref?.();
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    return new PrismaClient({ adapter, log: ["warn", "error"] } as any);
+  } else {
+    // ACA: UAMI-backed DefaultAzureCredential.
+    const credential: TokenCredential = new DefaultAzureCredential({
+      managedIdentityClientId: process.env.AZURE_CLIENT_ID,
+    });
+    getToken = () =>
+      getCachedToken("mi", async () => {
+        const t = await credential.getToken(PG_AAD_SCOPE);
+        if (!t?.token) throw new Error("Failed to acquire Entra token for Postgres");
+        return { token: t.token, expiresOnMs: t.expiresOnTimestamp };
+      });
   }
 
-  // ACA: async credential + password function.
-  const credential: TokenCredential = new DefaultAzureCredential({
-    managedIdentityClientId: process.env.AZURE_CLIENT_ID,
-  });
-  const config: PoolConfig = {
+  // Prisma 6 PrismaPg: takes pg connection config + owns the pool.
+  // Explicit v6 timeout defaults so the v7 upgrade is a no-op here.
+  const adapter = new PrismaPg({
     host: parsed.host,
     port: parsed.port,
     database: parsed.database,
     user: parsed.user,
-    // See note in buildPoolWithToken — system CA bundle + SNI verification.
+    // System CA bundle (includes DigiCert Global Root G2, root for
+    // *.postgres.database.azure.com); SNI hostname verification is on
+    // by default — passing no `ca` enables system-root validation.
     ssl: parsed.ssl ? { rejectUnauthorized: true } : false,
-    password: async () => {
-      const tok = await credential.getToken(PG_AAD_SCOPE);
-      if (!tok?.token) throw new Error("Failed to acquire Entra token for Postgres");
-      return tok.token;
-    },
-  };
-  const pool = new Pool(config);
-  pool.on("error", (err) => {
-    console.warn("[prisma-pg] idle client error:", err.message);
+    password: getToken,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 300_000,
   });
-  const adapter = new PrismaPg(pool);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return new PrismaClient({ adapter, log: ["warn", "error"] } as any);
 }

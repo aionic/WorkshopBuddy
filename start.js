@@ -53,11 +53,10 @@ function run(cmd, args, env) {
 async function probeDatabase() {
   const probeTimeoutMs = Number(process.env.DB_PROBE_TIMEOUT_MS ?? 15000);
   console.log(`[start] probing database (timeout=${probeTimeoutMs}ms)...`);
-  let PrismaClient, PrismaPg, Pool, DefaultAzureCredential;
+  let PrismaClient, PrismaPg, DefaultAzureCredential;
   try {
     ({ PrismaClient } = require("@prisma/client"));
     ({ PrismaPg } = require("@prisma/adapter-pg"));
-    ({ Pool } = require("pg"));
     ({ DefaultAzureCredential } = require("@azure/identity"));
   } catch (err) {
     console.error("[start] could not load Prisma + adapter; skipping boot probe:", err.message);
@@ -66,13 +65,14 @@ async function probeDatabase() {
   // Build a one-shot client that authenticates via the UAMI, identical to
   // src/lib/db.ts and prisma/seed.js — required because raw `new PrismaClient()`
   // has no password and PG Entra-only auth rejects "(not available)".
+  // Prisma 6: PrismaPg owns the pool; we pass pg connection config.
   const url = process.env.DATABASE_URL;
   const u = new URL(url);
   const ssl = (u.searchParams.get("sslmode") ?? "require") !== "disable";
   const credential = new DefaultAzureCredential({
     managedIdentityClientId: process.env.AZURE_CLIENT_ID,
   });
-  const pool = new Pool({
+  const adapter = new PrismaPg({
     host: u.hostname,
     port: u.port ? Number(u.port) : 5432,
     database: decodeURIComponent(u.pathname.replace(/^\//, "")),
@@ -83,8 +83,9 @@ async function probeDatabase() {
       if (!t?.token) throw new Error("Failed to acquire Entra token for Postgres");
       return t.token;
     },
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 300_000,
   });
-  const adapter = new PrismaPg(pool);
   const client = new PrismaClient({ adapter });
   const timeout = new Promise((_, reject) =>
     setTimeout(() => reject(new Error(`db probe timed out after ${probeTimeoutMs}ms`)), probeTimeoutMs)

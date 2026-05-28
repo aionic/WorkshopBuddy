@@ -1,10 +1,9 @@
 // Plain JS seed used at container startup (no tsx required at runtime).
-// Uses the @prisma/adapter-pg driver adapter with an Entra access token
-// (via @azure/identity) so it can authenticate to Azure Database for
-// PostgreSQL Flexible Server with Entra-only auth.
+// Uses the Prisma 6 @prisma/adapter-pg driver adapter — PrismaPg owns
+// the pg.Pool internally; we pass an async `password` callback so every
+// new connection picks up a fresh Entra token.
 const { PrismaClient } = require("@prisma/client");
 const { PrismaPg } = require("@prisma/adapter-pg");
-const { Pool } = require("pg");
 const { DefaultAzureCredential } = require("@azure/identity");
 
 const PG_AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
@@ -17,7 +16,7 @@ function buildSeedClient() {
   const credential = new DefaultAzureCredential({
     managedIdentityClientId: process.env.AZURE_CLIENT_ID,
   });
-  const pool = new Pool({
+  const adapter = new PrismaPg({
     host: u.hostname,
     port: u.port ? Number(u.port) : 5432,
     database: decodeURIComponent(u.pathname.replace(/^\//, "")),
@@ -28,8 +27,9 @@ function buildSeedClient() {
       if (!t?.token) throw new Error("Failed to acquire Entra token for Postgres");
       return t.token;
     },
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 300_000,
   });
-  const adapter = new PrismaPg(pool);
   return new PrismaClient({ adapter });
 }
 

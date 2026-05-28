@@ -49,9 +49,18 @@ No work — just commit the new `package-lock.json`.
 
 ---
 
-## Phase 1 — Prisma 5 → 6
+## Phase 1 — Prisma 5 → 6 ✅ shipped 2026-05-28
 
 **Why first:** smallest surface area, stabilizes the driver-adapter pattern we already use end-to-end (`src/lib/db.ts`, `prisma/seed.js`, `start.js`).
+
+> **Outcome:** prisma 6.19.3 live on revision `azd-1780004461`, `/api/health` 200.
+>
+> **Gotchas hit:**
+> - `PrismaPg` v6 constructor takes a pg config object directly (no separate `Pool`); `password` accepts an async function called per new connection — clean fit for Entra token rotation, removed our `setInterval` pool-churn hack.
+> - `driverAdapters` graduated to stable — removed from `previewFeatures`.
+> - The default base image (`mcr.microsoft.com/azurelinux/base/nodejs:20`) segfaults loading Prisma 6's engine (both N-API and standalone binary). Swapped to `node:20-bookworm-slim` — Prisma's primary tested target.
+> - **`engineType = "binary"` is incompatible with driver adapters** — throws `PrismaClientConstructorValidationError` at runtime. Use the default library engine.
+> - Added `--ignore-scripts` to `npm ci` so Prisma's postinstall doesn't run inside the deps layer (we run `prisma generate` explicitly in the builder stage).
 
 ```bash
 npm i -D prisma@^6
