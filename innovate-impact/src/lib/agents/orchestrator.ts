@@ -77,7 +77,13 @@ export interface OrchestrationResult {
   agents: AgentResult[];
   synthesis: SynthesisBundle;
   artifacts: Array<{ artifactType: ArtifactType; content: ArtifactContent; markdown: string }>;
-  review: { qualityScore: number; missingSections: string[]; suggestedEdits: string[] };
+  review: {
+    qualityScore: number;
+    missingSections: string[];
+    suggestedEdits: string[];
+    consistencyFindings?: string[];
+    perArtifactScores?: Array<{ artifactType: string; score: number; gaps: string[] }>;
+  };
   usedLiveAI: boolean;
 }
 
@@ -264,18 +270,76 @@ function composeSystemPrompt(def: AgentDefinition): string {
 }
 
 /**
- * Build the user prompt: agent context + optional facilitator-provided custom
- * instructions + the JSON schema hint. Custom instructions are passed through
- * to every agent so workshop facilitators can steer the entire run.
+ * Build the user prompt: agent context + labeled upstream handoff payloads +
+ * optional facilitator-provided custom instructions + the JSON schema hint.
+ *
+ * Upstream agent outputs are surfaced as `upstream.<camelCaseAgentName>` keys
+ * so each sub-agent can read its prerequisites by name rather than mining an
+ * opaque blob. Only the upstream slices named in `def.dependsOn` are included.
+ *
+ * Custom instructions are passed through to every agent so workshop
+ * facilitators can steer the entire run.
  */
-function composeUserPrompt(def: AgentDefinition, contextJson: string, customInstructions?: string, extra?: string): string {
+function composeUserPrompt(
+  def: AgentDefinition,
+  contextJson: string,
+  customInstructions?: string,
+  extra?: string,
+  upstream?: Record<string, unknown>
+): string {
   const parts = [`Agent: ${def.name}`, `Context (JSON):\n${contextJson}`];
+  if (upstream && Object.keys(upstream).length > 0) {
+    parts.push(`Upstream agent outputs (read these first; treat as source of truth):\n${JSON.stringify({ upstream }, null, 2)}`);
+  }
   if (extra) parts.push(extra);
   if (customInstructions && customInstructions.trim()) {
     parts.push(`Additional facilitator instructions to apply across the engagement:\n${customInstructions.trim()}`);
   }
   parts.push(`Return ONLY valid JSON matching this schema: ${def.schemaHint}`);
   return parts.join("\n\n");
+}
+
+/**
+ * Map an agent display name (e.g. "Pain Point Synthesis Agent") to the
+ * camelCase key used in `upstream.<name>` handoff payloads
+ * (e.g. "painPointSynthesis"). Mirrors the names used in agent-prompts.ts
+ * dependsOn fields and in this module's persona-card documentation.
+ */
+function upstreamKeyForAgent(agentName: string): string {
+  const stripped = agentName.replace(/\s+Agent$/i, "").trim();
+  const words = stripped.split(/\s+/);
+  if (words.length === 0) return stripped;
+  const head = words[0].toLowerCase();
+  const tail = words
+    .slice(1)
+    .filter((w) => w.toLowerCase() !== "and")
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+    .join("");
+  return head + tail;
+}
+
+/**
+ * Build the labeled upstream handoff payload for a given agent. Returns only
+ * the upstream slices declared in `def.dependsOn`, keyed by camelCase agent
+ * name. Missing upstream entries are surfaced as `null` so the sub-agent can
+ * follow its escape-hatch policy.
+ */
+function buildUpstreamHandoff(
+  def: AgentDefinition,
+  upstreamOutputs: Map<string, unknown>
+): { handoff: Record<string, unknown>; missing: string[] } {
+  const handoff: Record<string, unknown> = {};
+  const missing: string[] = [];
+  for (const depName of def.dependsOn ?? []) {
+    const key = upstreamKeyForAgent(depName);
+    if (upstreamOutputs.has(depName)) {
+      handoff[key] = upstreamOutputs.get(depName);
+    } else {
+      handoff[key] = null;
+      missing.push(depName);
+    }
+  }
+  return { handoff, missing };
 }
 
 /**
@@ -288,7 +352,12 @@ async function executeAgent<T>(
   def: AgentDefinition,
   contextJson: string,
   fallback: () => T,
-  options: { useLive: boolean; customInstructions?: string; extraUserPrompt?: string } = { useLive: false }
+  options: {
+    useLive: boolean;
+    customInstructions?: string;
+    extraUserPrompt?: string;
+    upstream?: Record<string, unknown>;
+  } = { useLive: false }
 ): Promise<AgentResult> {
   return runAgent(def.name, async () => {
     if (!options.useLive) {
@@ -296,7 +365,7 @@ async function executeAgent<T>(
     }
     try {
       const system = composeSystemPrompt(def);
-      const user = composeUserPrompt(def, contextJson, options.customInstructions, options.extraUserPrompt);
+      const user = composeUserPrompt(def, contextJson, options.customInstructions, options.extraUserPrompt, options.upstream);
       const output = await getAIProvider().generateStructuredJson<T>(user, system);
       return { __agent: true as const, output, usedLLM: true };
     } catch (err) {
@@ -671,12 +740,22 @@ export async function runInnovationWorkflow(
 
   const baseContext = contextString(project, inputs);
 
+  // Track each synthesis agent's output by display name so downstream agents
+  // can read labeled handoff payloads via `upstream.<camelCaseName>` keys.
+  const upstreamOutputs = new Map<string, unknown>();
+
   // Run each synthesis agent against the live LLM with its dedicated system
   // prompt. customInstructions is injected into every agent's user prompt.
+  // Each agent receives only the upstream slices declared in its dependsOn.
   for (const def of SYNTHESIS_AGENTS) {
     const fb = synthesisFallbacks[def.name];
-    const result = await executeAgent(def, baseContext, fb, { useLive, customInstructions });
+    const { handoff, missing } = buildUpstreamHandoff(def, upstreamOutputs);
+    if (missing.length > 0) {
+      console.warn(`[orchestrator] "${def.name}" missing upstream: ${missing.join(", ")} — proceeding with null payloads`);
+    }
+    const result = await executeAgent(def, baseContext, fb, { useLive, customInstructions, upstream: handoff });
     agents.push(result);
+    upstreamOutputs.set(def.name, result.output);
   }
 
   const findOutput = (name: string) => agents.find((a) => a.name === name)?.output;
@@ -734,6 +813,7 @@ export async function runInnovationWorkflow(
   );
 
   const packager = await runAgent(ARTIFACT_PACKAGER_AGENT.name, async () => {
+    const packagerHandoff = buildUpstreamHandoff(ARTIFACT_PACKAGER_AGENT, upstreamOutputs).handoff;
     // Parallelize per-artifact LLM calls. Each call is independent and uses the same
     // upstream synthesis context. Order is preserved via Promise.all index alignment.
     const perArtifact = await Promise.all(
@@ -745,7 +825,7 @@ export async function runInnovationWorkflow(
           try {
             const extra = `Artifact to produce now: ${t}\n\nFollow the section guidance for this artifact type from your system instructions.`;
             const system = composeSystemPrompt(ARTIFACT_PACKAGER_AGENT);
-            const user = composeUserPrompt(ARTIFACT_PACKAGER_AGENT, packagerContext, customInstructions, extra);
+            const user = composeUserPrompt(ARTIFACT_PACKAGER_AGENT, packagerContext, customInstructions, extra, packagerHandoff);
             const llmContent = await getAIProvider().generateStructuredJson<ArtifactContent>(user, system);
             if (llmContent && llmContent.title && Array.isArray(llmContent.sections) && llmContent.sections.length > 0) {
               content = llmContent;
@@ -783,6 +863,9 @@ export async function runInnovationWorkflow(
     };
   });
   agents.push(packager);
+  upstreamOutputs.set(ARTIFACT_PACKAGER_AGENT.name, {
+    artifacts: packagerResult.map((p) => ({ artifactType: p.artifactType, content: p.content }))
+  });
 
   // ----- Application Spec Agent -----
   // Runs only if the user requested the Application Spec artifact. The Solution
@@ -816,6 +899,7 @@ export async function runInnovationWorkflow(
     const specFallback = () => buildApplicationSpecFallback(project, synthesis, specAssumptions);
 
     const specAgent = await runAgent(APPLICATION_SPEC_AGENT.name, async () => {
+      const specHandoff = buildUpstreamHandoff(APPLICATION_SPEC_AGENT, upstreamOutputs).handoff;
       let content: ArtifactContent | null = null;
       let usedLLM = false;
       let llmError: string | undefined;
@@ -826,7 +910,7 @@ export async function runInnovationWorkflow(
             "The Solution Map artifact has been generated and is included in your context as `solutionMap`. Treat it as the prerequisite source of truth and do not contradict its architecture, components, or data flow.\n\n" +
             "Follow the section guidance from your system instructions exactly.";
           const system = composeSystemPrompt(APPLICATION_SPEC_AGENT);
-          const user = composeUserPrompt(APPLICATION_SPEC_AGENT, specContext, customInstructions, extra);
+          const user = composeUserPrompt(APPLICATION_SPEC_AGENT, specContext, customInstructions, extra, specHandoff);
           const llmContent = await getAIProvider().generateStructuredJson<ArtifactContent>(user, system);
           if (llmContent && llmContent.title && Array.isArray(llmContent.sections) && llmContent.sections.length > 0) {
             content = llmContent;
@@ -845,6 +929,7 @@ export async function runInnovationWorkflow(
       return { __agent: true as const, output: { artifactType: "Application Spec" }, usedLLM, llmError };
     });
     agents.push(specAgent);
+    upstreamOutputs.set(APPLICATION_SPEC_AGENT.name, { artifactType: "Application Spec" });
   }
 
   // ----- Review and Quality Agent -----
@@ -860,17 +945,33 @@ export async function runInnovationWorkflow(
   const reviewFallback = () => {
     const missing: string[] = [];
     const suggestions: string[] = [];
+    const perArtifactScores: Array<{ artifactType: string; score: number; gaps: string[] }> = [];
     for (const a of packagerResult) {
-      if (!a.content.sections.length) missing.push(`${a.artifactType}: no sections`);
-      if (!a.content.nextSteps?.length) suggestions.push(`${a.artifactType}: add next steps`);
+      const gaps: string[] = [];
+      if (!a.content.sections.length) {
+        missing.push(`${a.artifactType}: no sections`);
+        gaps.push("No sections rendered");
+      }
+      if (!a.content.nextSteps?.length) {
+        suggestions.push(`${a.artifactType}: add next steps`);
+        gaps.push("Missing next steps");
+      }
+      if (!a.content.assumptions?.length) {
+        gaps.push("Missing assumptions");
+      }
+      const score = Math.max(60, 100 - gaps.length * 10);
+      perArtifactScores.push({ artifactType: a.artifactType, score, gaps });
     }
     return {
       qualityScore: Math.max(60, 100 - missing.length * 10 - suggestions.length * 5),
       missingSections: missing,
-      suggestedEdits: suggestions
+      suggestedEdits: suggestions,
+      consistencyFindings: [] as string[],
+      perArtifactScores
     };
   };
-  const review = await executeAgent(REVIEW_AGENT, reviewContext, reviewFallback, { useLive, customInstructions });
+  const reviewHandoff = buildUpstreamHandoff(REVIEW_AGENT, upstreamOutputs).handoff;
+  const review = await executeAgent(REVIEW_AGENT, reviewContext, reviewFallback, { useLive, customInstructions, upstream: reviewHandoff });
   agents.push(review);
 
   return {
