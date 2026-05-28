@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { assertProjectAccess, withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export async function GET(_: Request, { params }: { params: { projectId: string } }) {
+type Ctx = { params: { projectId: string } };
+
+export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const project = await prisma.project.findUnique({
     where: { id: params.projectId },
     include: {
@@ -14,9 +18,10 @@ export async function GET(_: Request, { params }: { params: { projectId: string 
   });
   if (!project) return NextResponse.json({ error: "Not found" }, { status: 404 });
   return NextResponse.json(project);
-}
+});
 
-export async function PUT(req: Request, { params }: { params: { projectId: string } }) {
+export const PUT = withAuth<[Ctx]>(async (req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const body = await req.json();
   const data: Record<string, unknown> = {};
   for (const k of ["name", "clientName", "tpid", "msxOppId", "industry", "businessProblem", "timeHorizon", "status"]) {
@@ -27,9 +32,10 @@ export async function PUT(req: Request, { params }: { params: { projectId: strin
   }
   const project = await prisma.project.update({ where: { id: params.projectId }, data });
   return NextResponse.json(project);
-}
+});
 
-export async function DELETE(_: Request, { params }: { params: { projectId: string } }) {
+export const DELETE = withAuth<[Ctx]>(async (_req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   await prisma.project.delete({ where: { id: params.projectId } });
   return NextResponse.json({ ok: true });
-}
+});

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { renderDocx } from "@/lib/artifacts/docx-renderer";
 import { renderPptx } from "@/lib/artifacts/pptx-renderer";
 import type { ArtifactContent } from "@/lib/artifacts/artifact-schemas";
+import { assertArtifactAccess, withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,7 +12,8 @@ function safeFilename(s: string) {
   return s.replace(/[^a-z0-9-_.]+/gi, "_").slice(0, 80);
 }
 
-export async function GET(req: Request, { params }: { params: { artifactId: string } }) {
+export const GET = withAuth<[{ params: { artifactId: string } }]>(async (req, user, { params }) => {
+  await assertArtifactAccess(params.artifactId, user);
   const { searchParams } = new URL(req.url);
   const format = (searchParams.get("format") || "markdown").toLowerCase();
 
@@ -51,4 +53,4 @@ export async function GET(req: Request, { params }: { params: { artifactId: stri
   }
 
   return NextResponse.json({ error: "Unsupported format" }, { status: 400 });
-}
+});

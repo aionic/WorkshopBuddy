@@ -34,8 +34,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 ENV PORT=80
 ENV HOSTNAME=0.0.0.0
 # DATABASE_URL (postgres + Entra auth) and AZURE_CLIENT_ID are injected by the
-# Container App at runtime. start.js fetches an Entra token for `prisma db push`
-# and then hands off to Next.js (which uses @prisma/adapter-pg with token refresh).
+# Container App at runtime. start.js seeds (idempotent) and launches Next.js.
+# Schema migrations are NOT run here — they run in the azd `predeploy` hook
+# via `prisma migrate deploy` (see azure.yaml, P0-3).
 
 # Standalone Next.js output + full node_modules (start.js, seed.js, and
 # the driver-adapter Prisma client require pg / @prisma/adapter-pg /
@@ -47,11 +48,18 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/start.js ./start.js
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/src/lib/prompts ./src/lib/prompts
+# Worker (Service Bus consumer + sweeper) ships in the same image; Container
+# Apps Jobs run it via `tsx worker/agent-run-worker.ts` / `node worker/sweeper.js`.
+# It needs src/ + tsconfig.json so tsx can resolve `@/*` path aliases.
+COPY --from=builder /app/worker ./worker
+COPY --from=builder /app/src ./src
+COPY --from=builder /app/tsconfig.json ./tsconfig.json
+COPY --from=builder /app/next-env.d.ts ./next-env.d.ts
 
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD wget -qO- http://localhost:80/api/health || exit 1
 
-# Fetch an Entra token, run prisma db push, seed, then start Next.js.
+# Fetch an Entra token (via the seed/server adapters), seed the DB if empty,
+# then start Next.js. Schema migrations run out-of-band (see azure.yaml).
 CMD ["node", "start.js"]

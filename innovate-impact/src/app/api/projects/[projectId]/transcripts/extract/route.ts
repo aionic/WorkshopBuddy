@@ -6,6 +6,7 @@ import {
   TranscriptParseError,
 } from "@/lib/transcripts/parse";
 import { runTranscriptIntakeAgent } from "@/lib/agents/transcript-intake";
+import { assertProjectAccess, withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,7 +36,8 @@ function parseOutcomes(json: string | null | undefined): string[] {
   }
 }
 
-export async function POST(req: Request, { params }: { params: { projectId: string } }) {
+export const POST = withAuth<[{ params: { projectId: string } }]>(async (req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const project = await prisma.project.findUnique({ where: { id: params.projectId } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
@@ -135,4 +137,4 @@ export async function POST(req: Request, { params }: { params: { projectId: stri
   };
 
   return NextResponse.json(payload, { status: 200 });
-}
+});

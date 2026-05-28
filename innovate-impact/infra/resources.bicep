@@ -24,12 +24,25 @@ param foundryModelCapacity int
 param webAppImage string
 param appTargetPort int
 
+@description('Entra app (client) id for ACA Easy Auth. Empty disables Easy Auth.')
+param aadAppClientId string = ''
+
+@secure()
+@description('Entra app client secret for ACA Easy Auth. Required when aadAppClientId is set.')
+param aadAppClientSecret string = ''
+
+var easyAuthEnabled = !empty(aadAppClientId) && !empty(aadAppClientSecret)
+
 // --- naming (all derived, globally unique where required) ---------------
 var acrName = toLower(replace('wb${resourceToken}acr', '-', ''))
 var lawName = 'wb-${resourceToken}-law'
 var envName = 'wb-${resourceToken}-env'
 var appName = 'wb-${resourceToken}-app'
 var uamiName = 'wb-${resourceToken}-uami'
+var sbNamespaceName = 'wb-${resourceToken}-bus'
+var agentRunsQueueName = 'agent-runs'
+var workerJobName = 'wb-${resourceToken}-worker'
+var sweeperJobName = 'wb-${resourceToken}-sweeper'
 var pgAdminLogin = 'workshop-buddy-uami'
 var pgToken = toLower(uniqueString(subscription().id, environmentName, pgServerLocation))
 var pgServerName = 'pg-wb-${take(pgToken, 8)}'
@@ -227,6 +240,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
     managedEnvironmentId: env.id
     configuration: {
       activeRevisionsMode: 'Single'
+      secrets: easyAuthEnabled ? [
+        {
+          name: 'aad-client-secret'
+          value: aadAppClientSecret
+        }
+      ] : []
       ingress: {
         external: true
         targetPort: appTargetPort
@@ -259,6 +278,8 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'AZURE_FOUNDRY_RESPONSES_ENDPOINT', value: '${foundry.properties.endpoint}openai/v1/responses' }
             { name: 'AZURE_FOUNDRY_MODEL', value: foundryModelName }
             { name: 'AZURE_CLIENT_ID', value: uami.properties.clientId }
+            { name: 'SERVICEBUS_NAMESPACE', value: '${sbNamespace.name}.servicebus.windows.net' }
+            { name: 'SERVICEBUS_QUEUE', value: agentRunsQueueName }
           ]
         }
       ]
@@ -272,6 +293,213 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
+    }
+  }
+}
+
+// --- ACA Easy Auth (Entra ID, single-tenant) ---------------------------
+// Only configured when the preprovision hook produced an app registration.
+resource appAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' = if (easyAuthEnabled) {
+  parent: app
+  name: 'current'
+  properties: {
+    platform: {
+      enabled: true
+    }
+    globalValidation: {
+      unauthenticatedClientAction: 'RedirectToLoginPage'
+      redirectToProvider: 'azureactivedirectory'
+      // Health probe must remain anonymous; Next.js prefetch/static assets
+      // are served from /_next/* and never need an auth challenge.
+      excludedPaths: [
+        '/api/health'
+        '/_next/static/*'
+        '/_next/image*'
+        '/favicon.ico'
+      ]
+    }
+    identityProviders: {
+      azureActiveDirectory: {
+        enabled: true
+        registration: {
+          clientId: aadAppClientId
+          clientSecretSettingName: 'aad-client-secret'
+          openIdIssuer: '${environment().authentication.loginEndpoint}${subscription().tenantId}/v2.0'
+        }
+        validation: {
+          allowedAudiences: [
+            'api://${aadAppClientId}'
+          ]
+        }
+      }
+    }
+    login: {
+      tokenStore: {
+        enabled: false
+      }
+      preserveUrlFragmentsForLogins: false
+      routes: {}
+    }
+  }
+}
+
+// --- Service Bus (agent run queue) -------------------------------------
+// Basic SKU is sufficient: single queue, no topics, no sessions, no DLQ
+// forwarding. Auto-DLQ on max delivery still works.
+resource sbNamespace 'Microsoft.ServiceBus/namespaces@2022-10-01-preview' = {
+  name: sbNamespaceName
+  location: location
+  sku: { name: 'Basic', tier: 'Basic' }
+  properties: {
+    disableLocalAuth: true
+    minimumTlsVersion: '1.2'
+  }
+  tags: tags
+}
+
+resource sbQueue 'Microsoft.ServiceBus/namespaces/queues@2022-10-01-preview' = {
+  parent: sbNamespace
+  name: agentRunsQueueName
+  properties: {
+    maxDeliveryCount: 2          // 1 retry then dead-letter
+    lockDuration: 'PT5M'         // worker renews this every 30s
+    defaultMessageTimeToLive: 'PT1H'
+    deadLetteringOnMessageExpiration: true
+  }
+}
+
+// One role grants both send and receive — same UAMI is shared by web
+// (producer) and worker job (consumer).
+var sbDataOwnerRoleId = '090c5cfd-751d-490a-894a-3ce6f1109419'
+resource sbDataOwnerForUami 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: sbNamespace
+  name: guid(sbNamespace.id, uami.id, sbDataOwnerRoleId)
+  properties: {
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', sbDataOwnerRoleId)
+  }
+}
+
+// --- Container Apps Jobs (worker + sweeper) ----------------------------
+var jobEnvVars = [
+  { name: 'NODE_ENV', value: 'production' }
+  { name: 'DATABASE_URL', value: 'postgresql://${pgAdminLogin}@${pgServer.properties.fullyQualifiedDomainName}:5432/${pgDatabaseName}?sslmode=require' }
+  { name: 'AI_PROVIDER', value: 'azure_foundry' }
+  { name: 'AZURE_FOUNDRY_RESPONSES_ENDPOINT', value: '${foundry.properties.endpoint}openai/v1/responses' }
+  { name: 'AZURE_FOUNDRY_MODEL', value: foundryModelName }
+  { name: 'AZURE_CLIENT_ID', value: uami.properties.clientId }
+  { name: 'SERVICEBUS_NAMESPACE', value: '${sbNamespace.name}.servicebus.windows.net' }
+  { name: 'SERVICEBUS_QUEUE', value: agentRunsQueueName }
+]
+
+// Event-triggered consumer: KEDA azure-servicebus scaler watches queue depth
+// and starts one replica per message (up to maxExecutions).
+resource workerJob 'Microsoft.App/jobs@2024-03-01' = {
+  name: workerJobName
+  location: location
+  tags: tags
+  dependsOn: [
+    acrPullForUami
+    sbDataOwnerForUami
+  ]
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${uami.id}': {}
+    }
+  }
+  properties: {
+    environmentId: env.id
+    configuration: {
+      triggerType: 'Event'
+      replicaTimeout: 1800       // 30 min
+      replicaRetryLimit: 0       // Service Bus handles retry semantics
+      registries: [
+        { server: acr.properties.loginServer, identity: uami.id }
+      ]
+      eventTriggerConfig: {
+        replicaCompletionCount: 1
+        parallelism: 1
+        scale: {
+          minExecutions: 0
+          maxExecutions: 5
+          pollingInterval: 30
+          rules: [
+            {
+              name: 'agent-runs-queue'
+              type: 'azure-servicebus'
+              metadata: {
+                namespace: sbNamespace.name
+                queueName: agentRunsQueueName
+                messageCount: '1'
+              }
+              identity: uami.id
+            }
+          ]
+        }
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'worker'
+          image: webAppImage
+          command: [ 'node_modules/.bin/tsx', 'worker/agent-run-worker.ts' ]
+          resources: {
+            cpu: json('0.5')
+            memory: '1Gi'
+          }
+          env: jobEnvVars
+        }
+      ]
+    }
+  }
+}
+
+// Schedule-triggered sweeper: every 5 minutes, mark Running runs older
+// than 30 min as Failed (safety net for crashed/killed worker replicas).
+resource sweeperJob 'Microsoft.App/jobs@2024-03-01' = {
+  name: sweeperJobName
+  location: location
+  tags: tags
+  dependsOn: [
+    acrPullForUami
+  ]
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${uami.id}': {}
+    }
+  }
+  properties: {
+    environmentId: env.id
+    configuration: {
+      triggerType: 'Schedule'
+      replicaTimeout: 300
+      replicaRetryLimit: 1
+      registries: [
+        { server: acr.properties.loginServer, identity: uami.id }
+      ]
+      scheduleTriggerConfig: {
+        cronExpression: '*/5 * * * *'
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+    }
+    template: {
+      containers: [
+        {
+          name: 'sweeper'
+          image: webAppImage
+          command: [ 'node', 'worker/sweeper.js' ]
+          resources: {
+            cpu: json('0.25')
+            memory: '0.5Gi'
+          }
+          env: jobEnvVars
+        }
+      ]
     }
   }
 }
@@ -291,3 +519,8 @@ output foundryResponsesEndpoint string = '${foundry.properties.endpoint}openai/v
 output uamiName string = uami.name
 output uamiClientId string = uami.properties.clientId
 output uamiPrincipalId string = uami.properties.principalId
+output easyAuthEnabled bool = easyAuthEnabled
+output serviceBusNamespace string = '${sbNamespace.name}.servicebus.windows.net'
+output agentRunsQueueName string = agentRunsQueueName
+output workerJobName string = workerJob.name
+output sweeperJobName string = sweeperJob.name

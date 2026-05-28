@@ -95,7 +95,7 @@ AZURE_OPENAI_API_VERSION=2024-08-01-preview
 ```bash
 AI_PROVIDER=openai
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
+OPENAI_MODEL=gpt-5.4
 ```
 
 ---
@@ -241,7 +241,112 @@ infra/
 
 ---
 
-## 🛡️ Notes
+## Background processing (agent runs)
+
+Agent runs are queued, not fire-and-forget. The web container is no longer responsible for executing the orchestrator — that decouples run lifetime from request lifetime, so a revision restart or scale-in mid-run no longer leaves `AgentRun.status="Running"` forever.
+
+**Architecture:**
+
+```
+POST /agent-runs ──► AgentRun (status=Queued) ──► Service Bus queue `agent-runs`
+                                                          │
+                                                          ▼  (KEDA azure-servicebus rule, 0–5 replicas)
+                                                  Container Apps Job: worker
+                                                  (worker/agent-run-worker.ts via tsx)
+                                                          │
+                                                          ├─ updates AgentRun.status (Running → Completed / Failed)
+                                                          └─ writes Artifact rows
+
+Container Apps Job: sweeper (cron */5 * * * *)
+  └─ worker/sweeper.js: marks AgentRun.status="Running" older than 30 min as Failed
+```
+
+**Components:**
+
+| Piece | Path / name | Notes |
+| --- | --- | --- |
+| Producer | [src/lib/agents/queue.ts](src/lib/agents/queue.ts) | Cached `ServiceBusClient` via `DefaultAzureCredential`. `enqueueAgentRun({runId, projectId})`. |
+| API route | [src/app/api/projects/[projectId]/agent-runs/route.ts](src/app/api/projects/[projectId]/agent-runs/route.ts) | Returns `202 {runId, status:"Queued"}` when `SERVICEBUS_NAMESPACE` is set; otherwise falls back to in-process execution for local dev. |
+| Worker | [worker/agent-run-worker.ts](worker/agent-run-worker.ts) | Peek-lock, lock 5 min with 30s renewal. On throw → `abandonMessage` (re-deliver). On malformed envelope → `deadLetterMessage`. |
+| Sweeper | [worker/sweeper.js](worker/sweeper.js) | `pg` Pool + Entra token. Marks stuck Running runs as Failed with `outputJson={"error":"orchestrator timeout / lost"}`. |
+| Queue | `agent-runs` on `wb-<token>-bus.servicebus.windows.net` | Basic SKU. `maxDeliveryCount:2`, `lockDuration PT5M`, `defaultMessageTimeToLive PT1H`, DLQ on expiration. |
+
+**Identity & access:** worker and sweeper jobs share the web app's UAMI (`wb-<token>-uami`) and are granted `Azure Service Bus Data Owner` at the namespace scope. Database access is the same passwordless Entra path as the web container.
+
+**Local dev:** if `SERVICEBUS_NAMESPACE` is not set, the API route still runs the orchestrator in-process so `npm run dev` keeps working.
+
+**Monitoring:**
+
+```pwsh
+# Queue depth / DLQ
+az servicebus queue show -g rg-wb --namespace-name wb-l7kbxduxijdyk-bus -n agent-runs --query countDetails
+
+# Recent worker invocations (KEDA spins up only when there are messages)
+az containerapp job execution list -g rg-wb -n wb-l7kbxduxijdyk-worker -o table
+
+# Recent sweeper invocations
+az containerapp job execution list -g rg-wb -n wb-l7kbxduxijdyk-sweeper -o table
+```
+
+**Image deployment:** `azd deploy` builds and tags the web image; the `postdeploy` hook in `azure.yaml` re-tags both jobs to the same image so the three containers stay in lockstep. Manual recovery if `azd deploy` ever fails: `az acr build --no-logs --image web:<tag> .` then `az containerapp[ job] update --image <tag>` on app + both jobs.
+
+> **Gotcha:** Service Bus namespace names ending in `-sb` are reserved by Microsoft.ServiceBus (`InvalidSuffix`). We use `-bus`.
+
+---
+
+## Database migrations
+
+Schema changes use **versioned Prisma migrations**, not `prisma db push`. The container never mutates schema at startup.
+
+**Local workflow (developer making a schema change):**
+
+```pwsh
+# 1. Edit prisma/schema.prisma
+# 2. Create a migration file from the diff (no shadow DB needed):
+$stamp = (Get-Date -Format "yyyyMMddHHmmss") + "_<short_name>"
+New-Item -ItemType Directory -Force "prisma\migrations\$stamp" | Out-Null
+npx prisma migrate diff `
+  --from-schema-datasource ./prisma/schema.prisma `
+  --to-schema-datamodel    ./prisma/schema.prisma `
+  --script > "prisma\migrations\$stamp\migration.sql"
+# 3. Review the SQL, then commit prisma/schema.prisma + the migration folder.
+```
+
+**Deploy:** `azd deploy` runs an azd **`predeploy`** hook (defined in [azure.yaml](azure.yaml)) that:
+
+1. Acquires an `oss-rdbms` Entra token for the signed-in developer (already a PG admin via the `postprovision` hook).
+2. Builds a `DATABASE_URL` from `AZURE_PG_SERVER_FQDN` + `AZURE_PG_DATABASE_NAME`.
+3. Runs `npx prisma migrate deploy` — applies any pending migrations idempotently.
+
+Only after `migrate deploy` succeeds does azd push the new container image. Pre-existing rows are never dropped.
+
+**Container startup** ([start.js](start.js)) only runs the idempotent seed and launches Next.js. If a new image ships without the migration job having run, the app surfaces a Prisma `column X does not exist` runtime error — preferred over `db push --accept-data-loss` silently dropping columns to match an older image (this is exactly the cross-revision crashloop that motivated P0-3).
+
+**Rollback:** Azure PG Flexible Server **point-in-time restore**:
+
+```pwsh
+az postgres flexible-server restore `
+  --resource-group rg-wb `
+  --name pg-wb-<token>-restored `
+  --source-server pg-wb-<token> `
+  --restore-time "2026-05-27T19:00:00Z"
+```
+
+Re-point `DATABASE_URL` at the restored server (or swap names), then re-baseline with `prisma migrate resolve --applied <name>` against the restored DB.
+
+---
+
+## Postgres TLS
+
+The Postgres pool (in [src/lib/db.ts](src/lib/db.ts) and [prisma/seed.ts](prisma/seed.ts)) connects with `ssl: { rejectUnauthorized: true }` and **no** `ca` field. This is deliberate:
+
+- Node.js ships with the Mozilla CA root bundle, which includes **DigiCert Global Root G2** — the root for `*.postgres.database.azure.com`.
+- With `rejectUnauthorized: true` and no custom `ca`, the TLS stack validates the server cert against Node's bundled roots and enforces SNI hostname verification against the `PGHOST` value.
+- Result: connecting to the real `pg-wb-*.postgres.database.azure.com` host succeeds; substituting an IP literal or a hostname the cert doesn't cover fails closed with `ERR_TLS_CERT_ALTNAME_INVALID`.
+
+No PEM file is checked in or shipped with the container. Runtime upgrades just need a current Node.js LTS that includes the Mozilla CA bundle. If Azure ever rotates Postgres certs to a root not present in Node's bundle, update Node — not this app.
+
+## �🛡️ Notes
 
 - AI-drafted content requires human review and approval before client use. This disclaimer appears in the UI and in every generated artifact.
 - API keys are read from environment variables only and are never logged.

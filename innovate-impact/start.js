@@ -1,12 +1,17 @@
 // Container startup bootstrap for Azure Database for PostgreSQL Flexible
 // Server with Microsoft Entra (AAD) auth.
 //
-// The Prisma CLI (used here for `db push`) does NOT use our driver adapter
-// and reads credentials directly from DATABASE_URL. So before invoking it
-// we fetch an Entra access token and inject it into the URL as the
-// password. The token is then no longer needed: seed.js and server.js
-// build their own pg.Pool via the driver adapter, which re-fetches the
-// token on every new pool connection (so 1h token expiry is transparent).
+// As of P0-3, this script no longer mutates schema. Schema migrations run
+// out-of-band via `prisma migrate deploy` in the azd predeploy hook (see
+// azure.yaml). This container only:
+//   1. Seeds the DB if empty (idempotent; uses the driver adapter, which
+//      fetches its own Entra token per pool connection).
+//   2. Launches the Next.js standalone server.
+//
+// If a schema change ships without the migration job having run, the app
+// surfaces a Prisma "column X does not exist" runtime error — preferred over
+// `db push --accept-data-loss` silently dropping columns to match an older
+// container image (the P0-2 deploy crashloop, 2026-05-27).
 //
 // Env contract:
 //   DATABASE_URL    postgresql://<user>@<host>:5432/<db>?sslmode=require
@@ -14,26 +19,6 @@
 "use strict";
 
 const { spawnSync } = require("child_process");
-const { DefaultAzureCredential } = require("@azure/identity");
-
-const PG_AAD_SCOPE = "https://ossrdbms-aad.database.windows.net/.default";
-
-async function getToken() {
-  const credential = new DefaultAzureCredential({
-    managedIdentityClientId: process.env.AZURE_CLIENT_ID,
-  });
-  const t = await credential.getToken(PG_AAD_SCOPE);
-  if (!t?.token) throw new Error("Failed to acquire Entra token for Postgres");
-  return t.token;
-}
-
-function withPassword(url, password) {
-  const u = new URL(url);
-  // Tokens are JWTs containing special chars; encode them.
-  u.password = encodeURIComponent(password);
-  // URL() will re-encode the user as well; restore if it was simple.
-  return u.toString();
-}
 
 function run(cmd, args, env) {
   console.log(`[start] $ ${cmd} ${args.join(" ")}`);
@@ -44,26 +29,16 @@ function run(cmd, args, env) {
 }
 
 (async () => {
-  const originalUrl = process.env.DATABASE_URL;
-  if (!originalUrl) {
+  if (!process.env.DATABASE_URL) {
     console.error("[start] DATABASE_URL is not set");
     process.exit(1);
   }
-  console.log("[start] fetching Entra token for Postgres...");
-  const token = await getToken();
-  const urlWithToken = withPassword(originalUrl, token);
 
-  // 1) Prisma schema push -- needs token in URL.
-  run(
-    process.execPath,
-    ["node_modules/prisma/build/index.js", "db", "push", "--accept-data-loss", "--skip-generate"],
-    { ...process.env, DATABASE_URL: urlWithToken }
-  );
-
-  // 2) Seed -- uses the driver adapter (DATABASE_URL without token is fine).
+  // 1) Seed -- idempotent (no-ops if seed row already present).
+  //    seed.js uses the driver adapter, which fetches its own Entra token.
   run(process.execPath, ["prisma/seed.js"], process.env);
 
-  // 3) Hand off to the Next.js standalone server.
+  // 2) Hand off to the Next.js standalone server.
   console.log("[start] launching Next.js server...");
   require("./server.js");
 })().catch((err) => {

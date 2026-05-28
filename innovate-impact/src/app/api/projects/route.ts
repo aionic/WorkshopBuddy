@@ -1,23 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
-export async function GET() {
+export const GET = withAuth(async (_req, user) => {
   const projects = await prisma.project.findMany({
+    where: { ownerId: user.oid },
     orderBy: { updatedAt: "desc" },
     include: { _count: { select: { inputs: true, artifacts: true, agentRuns: true } } }
   });
   return NextResponse.json(projects);
-}
+});
 
-export async function POST(req: Request) {
+export const POST = withAuth(async (req, user) => {
   const body = await req.json();
   if (!body?.name || !body?.businessProblem) {
     return NextResponse.json({ error: "name and businessProblem are required" }, { status: 400 });
   }
   const project = await prisma.project.create({
     data: {
+      ownerId: user.oid,
       name: body.name,
       clientName: body.clientName ?? null,
       tpid: body.tpid ?? null,
@@ -34,4 +37,4 @@ export async function POST(req: Request) {
     }
   });
   return NextResponse.json(project, { status: 201 });
-}
+});

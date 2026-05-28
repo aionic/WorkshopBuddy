@@ -21,10 +21,10 @@
       "value": "${FOUNDRY_LOCATION=}"
     },
     "foundryModelName": {
-      "value": "${FOUNDRY_MODEL_NAME=gpt-4o-mini}"
+      "value": "${FOUNDRY_MODEL_NAME=gpt-5.4}"
     },
     "foundryModelVersion": {
-      "value": "${FOUNDRY_MODEL_VERSION=2024-07-18}"
+      "value": "${FOUNDRY_MODEL_VERSION=2026-03-05}"
     },
     "foundryModelSku": {
       "value": "${FOUNDRY_MODEL_SKU=GlobalStandard}"
@@ -37,6 +37,12 @@
     },
     "appTargetPort": {
       "value": "${APP_TARGET_PORT=80}"
+    },
+    "aadAppClientId": {
+      "value": "${AAD_APP_CLIENT_ID=}"
+    },
+    "aadAppClientSecret": {
+      "value": "${AAD_APP_CLIENT_SECRET=}"
     }
   }
 }

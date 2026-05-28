@@ -22,7 +22,7 @@ function buildSeedClient() {
     port: u.port ? Number(u.port) : 5432,
     database: decodeURIComponent(u.pathname.replace(/^\//, "")),
     user: decodeURIComponent(u.username),
-    ssl: ssl ? { rejectUnauthorized: false } : false,
+    ssl: ssl ? { rejectUnauthorized: true } : false,
     password: async () => {
       const t = await credential.getToken(PG_AAD_SCOPE);
       if (!t?.token) throw new Error("Failed to acquire Entra token for Postgres");
@@ -54,8 +54,13 @@ async function main() {
     console.log("Seed project already present:", existing.id);
     return;
   }
+  const seedOwnerId =
+    process.env.SEED_OWNER_ID ||
+    process.env.DEV_AUTH_BYPASS_OID ||
+    "98e79176-ff79-441d-ae4e-2bfc5ccf1a06";
   const project = await prisma.project.create({
     data: {
+      ownerId: seedOwnerId,
       name: "OCR to GenAI Document Intelligence Modernization",
       clientName: "Demo Global Logistics Client",
       industry: "Transportation, Logistics, Freight, and Shipping",

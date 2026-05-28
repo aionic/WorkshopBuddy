@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { assertProjectAccess, withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -7,7 +8,10 @@ export const dynamic = "force-dynamic";
 // works in-process; if the container restarts mid-run the row will be orphaned.
 const STALE_RUN_MS = 20 * 60 * 1000; // 20 minutes
 
-export async function GET(_: Request, { params }: { params: { projectId: string; runId: string } }) {
+type Ctx = { params: { projectId: string; runId: string } };
+
+export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const run = await prisma.agentRun.findUnique({ where: { id: params.runId } });
   if (!run || run.projectId !== params.projectId) {
     return NextResponse.json({ error: "Run not found" }, { status: 404 });
@@ -27,7 +31,7 @@ export async function GET(_: Request, { params }: { params: { projectId: string;
   }
 
   return NextResponse.json(buildResponse(run));
-}
+});
 
 function buildResponse(run: {
   id: string;

@@ -5,6 +5,7 @@ import {
   isPersona,
   isPriority,
 } from "@/lib/workshop-enums";
+import { assertProjectAccess, withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -17,7 +18,10 @@ type BatchItem = {
   submittedBy?: string | null;
 };
 
-export async function POST(req: Request, { params }: { params: { projectId: string } }) {
+type Ctx = { params: { projectId: string } };
+
+export const POST = withAuth<[Ctx]>(async (req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const project = await prisma.project.findUnique({ where: { id: params.projectId } });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
@@ -107,4 +111,4 @@ export async function POST(req: Request, { params }: { params: { projectId: stri
     { created: created.length, skipped: errors.length, errors, inputs: created },
     { status: 201 },
   );
-}
+});

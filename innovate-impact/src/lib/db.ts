@@ -66,7 +66,11 @@ function buildPrisma(): PrismaClient {
         port: parsed.port,
         database: parsed.database,
         user: parsed.user,
-        ssl: parsed.ssl ? { rejectUnauthorized: false } : false,
+        // Verify against Node's built-in Mozilla CA bundle (includes
+        // DigiCert Global Root G2, the root for *.postgres.database.azure.com).
+        // SNI hostname verification is on by default — passing no `ca`
+        // option is what enables system-root validation.
+        ssl: parsed.ssl ? { rejectUnauthorized: true } : false,
         password: token,
       };
       const p = new Pool(config);
@@ -105,7 +109,8 @@ function buildPrisma(): PrismaClient {
     port: parsed.port,
     database: parsed.database,
     user: parsed.user,
-    ssl: parsed.ssl ? { rejectUnauthorized: false } : false,
+    // See note in buildPoolWithToken — system CA bundle + SNI verification.
+    ssl: parsed.ssl ? { rejectUnauthorized: true } : false,
     password: async () => {
       const tok = await credential.getToken(PG_AAD_SCOPE);
       if (!tok?.token) throw new Error("Failed to acquire Entra token for Postgres");

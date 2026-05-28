@@ -34,10 +34,10 @@ param pgServerLocation string = ''
 param foundryLocation string = ''
 
 @description('Model deployment name (also used as deployment id and OpenAI model id).')
-param foundryModelName string = 'gpt-4o-mini'
+param foundryModelName string = 'gpt-5.4'
 
 @description('Model version pinned for the deployment.')
-param foundryModelVersion string = '2024-07-18'
+param foundryModelVersion string = '2026-03-05'
 
 @description('Foundry model deployment SKU (e.g. GlobalStandard, Standard).')
 param foundryModelSku string = 'GlobalStandard'
@@ -50,6 +50,13 @@ param webAppImage string = 'mcr.microsoft.com/k8se/quickstart:latest'
 
 @description('Container port the workload listens on. Quickstart listens on 80; the real Workshop Buddy image is configured (via PORT env) to also listen on 80.')
 param appTargetPort int = 80
+
+@description('Entra application (client) id for ACA Easy Auth. When empty, Easy Auth is not configured. Populated by the azd preprovision hook.')
+param aadAppClientId string = ''
+
+@secure()
+@description('Entra application client secret for ACA Easy Auth. Required when aadAppClientId is set. Populated by the azd preprovision hook.')
+param aadAppClientSecret string = ''
 
 var resourceToken = toLower(uniqueString(subscription().id, environmentName, location))
 var rgName = 'rg-${environmentName}'
@@ -78,6 +85,8 @@ module resources 'resources.bicep' = {
     foundryModelCapacity: foundryModelCapacity
     webAppImage: webAppImage
     appTargetPort: appTargetPort
+    aadAppClientId: aadAppClientId
+    aadAppClientSecret: aadAppClientSecret
   }
 }
 
@@ -99,3 +108,8 @@ output AZURE_FOUNDRY_RESPONSES_ENDPOINT string = resources.outputs.foundryRespon
 output AZURE_FOUNDRY_MODEL string = foundryModelName
 output AZURE_UAMI_CLIENT_ID string = resources.outputs.uamiClientId
 output AZURE_UAMI_PRINCIPAL_ID string = resources.outputs.uamiPrincipalId
+output AZURE_SERVICEBUS_NAMESPACE string = resources.outputs.serviceBusNamespace
+output AGENT_RUNS_QUEUE_NAME string = resources.outputs.agentRunsQueueName
+output AZURE_WORKER_JOB_NAME string = resources.outputs.workerJobName
+output AZURE_SWEEPER_JOB_NAME string = resources.outputs.sweeperJobName
+output AZURE_CONTAINER_APP_EASY_AUTH_ENABLED bool = resources.outputs.easyAuthEnabled

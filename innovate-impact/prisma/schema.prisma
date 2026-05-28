@@ -21,6 +21,10 @@ datasource db {
 model Project {
   id                String          @id @default(cuid())
   name              String
+  /// Entra object id (`oid`) of the user who owns this project. Populated from
+  /// the ACA Easy Auth `X-MS-CLIENT-PRINCIPAL-ID` header on create. Required
+  /// for AuthZ: only the owner can read/write a project (P0-1).
+  ownerId           String
   clientName        String?
   /// Microsoft TPID (Top Parent ID) for the customer account. Optional.
   tpid              String?

@@ -1,20 +1,26 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { runInnovationWorkflow } from "@/lib/agents/orchestrator";
+import { enqueueAgentRun, isAgentRunQueueConfigured } from "@/lib/agents/queue";
 import type { ArtifactType } from "@/lib/artifacts/artifact-schemas";
+import { assertProjectAccess, withAuth } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 600;
 
-export async function GET(_: Request, { params }: { params: { projectId: string } }) {
+type Ctx = { params: { projectId: string } };
+
+export const GET = withAuth<[Ctx]>(async (_req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const runs = await prisma.agentRun.findMany({
     where: { projectId: params.projectId },
     orderBy: { createdAt: "desc" }
   });
   return NextResponse.json(runs);
-}
+});
 
-export async function POST(req: Request, { params }: { params: { projectId: string } }) {
+export const POST = withAuth<[Ctx]>(async (req, user, { params }) => {
+  await assertProjectAccess(params.projectId, user);
   const body = (await req.json().catch(() => ({}))) as {
     mode?: string;
     artifactTypes?: ArtifactType[];
@@ -27,22 +33,46 @@ export async function POST(req: Request, { params }: { params: { projectId: stri
   });
   if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
 
+  // Create the run in Queued state. The worker (Container Apps Job, KEDA-
+  // scaled on the Service Bus queue depth) transitions Queued → Running →
+  // Completed/Failed. If Service Bus isn't configured (local dev), we fall
+  // back to the legacy fire-and-forget path so the workflow still runs.
+  const useQueue = isAgentRunQueueConfigured();
   const run = await prisma.agentRun.create({
     data: {
       projectId: project.id,
-      status: "Running",
-      inputJson: JSON.stringify({ mode: body.mode ?? "full_workflow", artifactTypes: body.artifactTypes, customInstructions: body.customInstructions }),
-      startedAt: new Date()
+      status: useQueue ? "Queued" : "Running",
+      inputJson: JSON.stringify({
+        mode: body.mode ?? "full_workflow",
+        artifactTypes: body.artifactTypes,
+        customInstructions: body.customInstructions
+      }),
+      startedAt: useQueue ? null : new Date()
     }
   });
 
-  // Fire-and-forget: orchestrator can take many minutes (well past the 240s ACA
-  // ingress timeout). Kick off the work but don't await it on the request path.
-  // The client polls GET /api/projects/:id/agent-runs/:runId for completion.
-  void executeRunInBackground(run.id, project, body);
+  if (useQueue) {
+    try {
+      await enqueueAgentRun({ runId: run.id, projectId: project.id });
+    } catch (err) {
+      console.error(`[agent-runs] enqueue failed for run ${run.id}:`, err);
+      await prisma.agentRun.update({
+        where: { id: run.id },
+        data: {
+          status: "Failed",
+          completedAt: new Date(),
+          outputJson: JSON.stringify({ error: `Enqueue failed: ${(err as Error).message}` })
+        }
+      });
+      return NextResponse.json({ error: "Failed to queue agent run" }, { status: 502 });
+    }
+    return NextResponse.json({ runId: run.id, status: "Queued" }, { status: 202 });
+  }
 
+  // Local dev fallback: fire-and-forget in-process.
+  void executeRunInBackground(run.id, project, body);
   return NextResponse.json({ runId: run.id, status: "Running" }, { status: 202 });
-}
+});
 
 async function executeRunInBackground(
   runId: string,

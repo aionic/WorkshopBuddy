@@ -23,8 +23,12 @@ hooks:
       shell: sh
       run: |
         set -e
-        APP_NAME=$(azd env get-value AZURE_CONTAINER_APP_NAME 2>/dev/null || echo "")
-        RG=$(azd env get-value AZURE_RESOURCE_GROUP 2>/dev/null || echo "")
+        azd_get() {
+          v=$(azd env get-value "$1" 2>/dev/null)
+          if [ $? -eq 0 ]; then echo "$v"; else echo ""; fi
+        }
+        APP_NAME=$(azd_get AZURE_CONTAINER_APP_NAME)
+        RG=$(azd_get AZURE_RESOURCE_GROUP)
         if [ -n "$APP_NAME" ] && [ -n "$RG" ]; then
           IMG=$(az containerapp show -g "$RG" -n "$APP_NAME" --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "")
           if [ -n "$IMG" ]; then
@@ -35,20 +39,64 @@ hooks:
         if [ -n "$PRINCIPAL_LOGIN" ]; then
           azd env set AZURE_PRINCIPAL_LOGIN "$PRINCIPAL_LOGIN"
         fi
+        # --- ACA Easy Auth (P0-1): create single-tenant app reg + client secret ---
+        ENV_NAME=$(azd_get AZURE_ENV_NAME)
+        AAD_ID=$(azd_get AAD_APP_CLIENT_ID)
+        if [ -z "$AAD_ID" ] && [ -n "$ENV_NAME" ]; then
+          DISPLAY_NAME="wb-${ENV_NAME}-easyauth"
+          echo "Creating Entra app registration: $DISPLAY_NAME"
+          AAD_ID=$(az ad app create --display-name "$DISPLAY_NAME" --sign-in-audience AzureADMyOrg --query appId -o tsv)
+          azd env set AAD_APP_CLIENT_ID "$AAD_ID"
+          echo "App client id: $AAD_ID"
+        fi
+        AAD_SECRET=$(azd_get AAD_APP_CLIENT_SECRET)
+        if [ -z "$AAD_SECRET" ] && [ -n "$AAD_ID" ]; then
+          echo "Creating client secret for Easy Auth app reg ..."
+          AAD_SECRET=$(az ad app credential reset --id "$AAD_ID" --display-name "easyauth-secret" --years 2 --query password -o tsv)
+          azd env set AAD_APP_CLIENT_SECRET "$AAD_SECRET"
+          echo "Client secret stored in azd env."
+        fi
     windows:
       shell: pwsh
       run: |
         $ErrorActionPreference = 'Continue'
         $env:PYTHONIOENCODING = 'utf-8'
         $env:PYTHONUTF8 = '1'
-        $appName = (azd env get-value AZURE_CONTAINER_APP_NAME 2>$null)
-        $rg = (azd env get-value AZURE_RESOURCE_GROUP 2>$null)
+        function Get-AzdEnvValue([string]$key) {
+          $v = azd env get-value $key 2>$null
+          if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; return '' }
+          return $v
+        }
+        $appName = Get-AzdEnvValue 'AZURE_CONTAINER_APP_NAME'
+        $rg = Get-AzdEnvValue 'AZURE_RESOURCE_GROUP'
         if ($appName -and $rg) {
           $img = (az containerapp show -g $rg -n $appName --query "properties.template.containers[0].image" -o tsv 2>$null)
           if ($img) { azd env set WEB_APP_IMAGE $img | Out-Null }
         }
         $upn = (az ad signed-in-user show --query userPrincipalName -o tsv 2>$null)
         if ($upn) { azd env set AZURE_PRINCIPAL_LOGIN $upn | Out-Null }
+        # --- ACA Easy Auth (P0-1): create single-tenant app reg + client secret ---
+        $envName = Get-AzdEnvValue 'AZURE_ENV_NAME'
+        $aadId = Get-AzdEnvValue 'AAD_APP_CLIENT_ID'
+        if (-not $aadId -and $envName) {
+          $displayName = "wb-$envName-easyauth"
+          Write-Host "Creating Entra app registration: $displayName" -ForegroundColor Cyan
+          $aadId = az ad app create --display-name $displayName --sign-in-audience AzureADMyOrg --query appId -o tsv
+          if ($aadId) {
+            azd env set AAD_APP_CLIENT_ID $aadId | Out-Null
+            Write-Host "App client id: $aadId" -ForegroundColor Green
+          }
+        }
+        $aadSecret = Get-AzdEnvValue 'AAD_APP_CLIENT_SECRET'
+        if (-not $aadSecret -and $aadId) {
+          Write-Host "Creating client secret for Easy Auth app reg ..." -ForegroundColor Cyan
+          $aadSecret = az ad app credential reset --id $aadId --display-name "easyauth-secret" --years 2 --query password -o tsv
+          if ($aadSecret) {
+            azd env set AAD_APP_CLIENT_SECRET $aadSecret | Out-Null
+            Write-Host "Client secret stored in azd env." -ForegroundColor Green
+          }
+        }
+        exit 0
   postprovision:
     posix:
       shell: sh
@@ -63,6 +111,14 @@ hooks:
         az postgres flexible-server microsoft-entra-admin create -g "$RG" -s "$PG" --object-id "$UAMI_PID" --display-name "workshop-buddy-uami" --type ServicePrincipal --only-show-errors 1>/dev/null
         if [ -n "$USER_PID" ] && [ -n "$USER_UPN" ]; then
           az postgres flexible-server microsoft-entra-admin create -g "$RG" -s "$PG" --object-id "$USER_PID" --display-name "$USER_UPN" --type User --only-show-errors 1>/dev/null
+        fi
+        # --- ACA Easy Auth (P0-1): set redirect URI on the app registration ---
+        FQDN=$(azd env get-value AZURE_CONTAINER_APP_FQDN 2>/dev/null || echo "")
+        AAD_ID=$(azd env get-value AAD_APP_CLIENT_ID 2>/dev/null || echo "")
+        if [ -n "$FQDN" ] && [ -n "$AAD_ID" ]; then
+          REDIRECT="https://${FQDN}/.auth/login/aad/callback"
+          echo "Setting Entra redirect URI: $REDIRECT"
+          az ad app update --id "$AAD_ID" --web-redirect-uris "$REDIRECT" --only-show-errors 1>/dev/null
         fi
     windows:
       shell: pwsh
@@ -85,14 +141,95 @@ hooks:
           az postgres flexible-server microsoft-entra-admin create -g $rg -s $pg --object-id $signedIn.id --display-name $signedIn.upn --type User --only-show-errors | Out-Null
           Write-Host "Added user admin: $($signedIn.upn)" -ForegroundColor Green
         }
+        # --- ACA Easy Auth (P0-1): set redirect URI on the app registration ---
+        $fqdn = $vals['AZURE_CONTAINER_APP_FQDN']
+        $aadId = $vals['AAD_APP_CLIENT_ID']
+        if ($fqdn -and $aadId) {
+          $redirect = "https://$fqdn/.auth/login/aad/callback"
+          Write-Host "Setting Entra redirect URI: $redirect" -ForegroundColor Cyan
+          az ad app update --id $aadId --web-redirect-uris $redirect --only-show-errors | Out-Null
+        }
+  predeploy:
+    posix:
+      shell: sh
+      run: |
+        set -e
+        # P0-3: apply versioned Prisma migrations against the live PG before
+        # the new container image rolls out. Runs as the signed-in dev user
+        # (already an Entra admin on PG via postprovision hook).
+        PG_FQDN=$(azd env get-value AZURE_PG_SERVER_FQDN)
+        PG_DB=$(azd env get-value AZURE_PG_DATABASE_NAME)
+        UPN=$(az ad signed-in-user show --query userPrincipalName -o tsv)
+        TOKEN=$(az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv)
+        # URL-encode UPN (@) and the JWT token.
+        ENC_UPN=$(printf %s "$UPN" | sed 's/@/%40/g')
+        ENC_TOK=$(printf %s "$TOKEN" | python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.stdin.read(),safe=""))')
+        export DATABASE_URL="postgresql://${ENC_UPN}:${ENC_TOK}@${PG_FQDN}:5432/${PG_DB}?sslmode=require"
+        echo "Running prisma migrate deploy against ${PG_FQDN}/${PG_DB} ..."
+        npx --no prisma migrate deploy
+    windows:
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        # P0-3: apply versioned Prisma migrations against the live PG before
+        # the new container image rolls out. Runs as the signed-in dev user
+        # (already an Entra admin on PG via postprovision hook).
+        $pgFqdn = azd env get-value AZURE_PG_SERVER_FQDN
+        $pgDb = azd env get-value AZURE_PG_DATABASE_NAME
+        $upn = az ad signed-in-user show --query userPrincipalName -o tsv
+        $token = az account get-access-token --resource-type oss-rdbms --query accessToken -o tsv
+        $encUpn = [uri]::EscapeDataString($upn)
+        $encTok = [uri]::EscapeDataString($token)
+        $env:DATABASE_URL = "postgresql://${encUpn}:${encTok}@${pgFqdn}:5432/${pgDb}?sslmode=require"
+        Write-Host "Running prisma migrate deploy against $pgFqdn/$pgDb ..." -ForegroundColor Cyan
+        npx --no prisma migrate deploy
   postdeploy:
     posix:
       shell: sh
       run: |
         URL=$(azd env get-value SERVICE_WEB_URI 2>/dev/null || echo "")
         if [ -n "$URL" ]; then echo "Workshop Buddy deployed: $URL"; fi
+        # P0-4: align the worker + sweeper Container Apps Jobs to the image
+        # that azd just pushed to the web app. Jobs use the same image as web
+        # but `azd deploy` only updates Container Apps, not Jobs.
+        RG=$(azd env get-value AZURE_RESOURCE_GROUP 2>/dev/null || echo "")
+        WEB=$(azd env get-value AZURE_CONTAINER_APP_NAME 2>/dev/null || echo "")
+        WORKER=$(azd env get-value AZURE_WORKER_JOB_NAME 2>/dev/null || echo "")
+        SWEEPER=$(azd env get-value AZURE_SWEEPER_JOB_NAME 2>/dev/null || echo "")
+        if [ -n "$RG" ] && [ -n "$WEB" ]; then
+          IMG=$(az containerapp show -g "$RG" -n "$WEB" --query "properties.template.containers[0].image" -o tsv 2>/dev/null || echo "")
+          if [ -n "$IMG" ]; then
+            if [ -n "$WORKER" ]; then
+              echo "Patching worker job $WORKER → $IMG"
+              az containerapp job update -g "$RG" -n "$WORKER" --image "$IMG" --only-show-errors 1>/dev/null
+            fi
+            if [ -n "$SWEEPER" ]; then
+              echo "Patching sweeper job $SWEEPER → $IMG"
+              az containerapp job update -g "$RG" -n "$SWEEPER" --image "$IMG" --only-show-errors 1>/dev/null
+            fi
+          fi
+        fi
     windows:
       shell: pwsh
       run: |
         $url = (azd env get-value SERVICE_WEB_URI 2>$null)
         if ($url) { Write-Host "Workshop Buddy deployed: $url" -ForegroundColor Green }
+        # P0-4: align the worker + sweeper Container Apps Jobs to the image
+        # that azd just pushed to the web app.
+        $rg = (azd env get-value AZURE_RESOURCE_GROUP 2>$null)
+        $web = (azd env get-value AZURE_CONTAINER_APP_NAME 2>$null)
+        $worker = (azd env get-value AZURE_WORKER_JOB_NAME 2>$null)
+        $sweeper = (azd env get-value AZURE_SWEEPER_JOB_NAME 2>$null)
+        if ($rg -and $web) {
+          $img = (az containerapp show -g $rg -n $web --query "properties.template.containers[0].image" -o tsv 2>$null)
+          if ($img) {
+            if ($worker) {
+              Write-Host "Patching worker job $worker -> $img" -ForegroundColor Cyan
+              az containerapp job update -g $rg -n $worker --image $img --only-show-errors | Out-Null
+            }
+            if ($sweeper) {
+              Write-Host "Patching sweeper job $sweeper -> $img" -ForegroundColor Cyan
+              az containerapp job update -g $rg -n $sweeper --image $img --only-show-errors | Out-Null
+            }
+          }
+        }
