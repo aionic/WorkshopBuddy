@@ -10,7 +10,12 @@ WORKDIR /app
 RUN tdnf install -y openssl ca-certificates && tdnf clean all
 COPY package.json package-lock.json* ./
 COPY prisma ./prisma
-RUN npm install --no-audit --no-fund
+# `npm ci` for reproducible installs from package-lock.json (faster than
+# `npm install`, fails fast on lockfile drift). BuildKit cache mount keeps
+# the npm cache warm across local rebuilds; ignored by ACR remote build but
+# harmless there.
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
 
 # --- build ---
 FROM ${BASE_IMAGE} AS builder

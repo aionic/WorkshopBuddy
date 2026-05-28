@@ -12,7 +12,7 @@ Workshop Buddy deploys to Azure with one command: `azd up`. This doc explains wh
 | --- | --- | --- |
 | [Azure CLI](https://learn.microsoft.com/cli/azure/install-azure-cli) | 2.60 | `az login` against the target tenant before `azd up` |
 | [azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd) | 1.10 | `azd auth login` against the same tenant |
-| Docker | 24 | Local builds; azd uses ACR build remotely |
+| Docker | 24 | **Required for local build (default).** Optional if you flip to ACR remote build |
 | Node.js | 20+ | Only needed if you want to run locally first |
 
 Permissions on the target subscription:
@@ -22,6 +22,21 @@ Permissions on the target subscription:
 - **Application.ReadWrite.OwnedBy** on Microsoft Graph — for the preprovision hook to create the Easy Auth app reg.
 
 > If you're using PIM-eligible Owner/Contributor at a management group, **activate before** running `azd up`. Long deploys can outlive a 4-hour activation window — see the PIM note in your global Copilot memory.
+
+---
+
+## Local vs remote build
+
+`azd deploy` can build the image two ways. The default is **local Docker build** — it's faster on repeat deploys (BuildKit cache) and avoids the Windows-only `az acr build` Unicode crash from streaming Next.js's box-drawing characters through cp1252.
+
+| Mode | When to use | How |
+| --- | --- | --- |
+| **Local Docker** (default) | Dev workstations with Docker Desktop running | `azd deploy` (no extra config) |
+| **ACR remote build** | CI runners, machines without Docker, low-bandwidth links where uploading a built image is slower than uploading source | Edit [azure.yaml](../azure.yaml) → `services.web.docker.remoteBuild: true`, commit, `azd deploy` |
+
+The toggle lives in [azure.yaml](../azure.yaml). Switching modes does not require a re-provision — only the build step changes.
+
+> Why not always remote build? The shared ACR build agent on Windows-originated `azd deploy` runs `az acr build` under the hood, which streams colorama-coloured Next.js output through the Windows cp1252 console and crashes on `▲` / `✔` glyphs. We pass `--no-logs` in CI to dodge this; local Docker side-steps it entirely.
 
 ---
 
@@ -143,10 +158,12 @@ PG **point-in-time restore** is the nuclear option for data corruption: it creat
 | Symptom | Cause | Fix |
 | --- | --- | --- |
 | `AuthorizationFailed` on `Microsoft.KeyVault/...` or RBAC writes mid-script | PIM elevation expired | Re-activate PIM, re-run `azd provision` (idempotent) |
-| `az acr build` crashes with `UnicodeEncodeError` on Windows | Streaming colored Next.js logs through cp1252 console | We pass `--no-logs`; the build still completes in ACR. Verify with `az acr task list-runs -r <acr> --top 3 -o table` |
+| `az acr build` crashes with `UnicodeEncodeError` on Windows | Streaming colored Next.js logs through cp1252 console | Use the default **local Docker build** (see "Local vs remote build" above); or if you must use ACR build, pass `--no-logs` and verify with `az acr task list-runs -r <acr> --top 3 -o table` |
+| `archive/tar: write too long` during ACR remote build | A file inside the build context grew while tar was packing (e.g. log file being tee'd into the workspace) | Use local Docker build; or write logs to `$env:TEMP` instead of inside the workspace. `.dockerignore` excludes `scripts/utils/_temp_*` to belt-and-braces this |
 | `prisma migrate deploy` fails in predeploy with auth error | Signed-in user isn't PG Entra admin yet (first-deploy race), or token TTL exceeded | Re-run; postprovision hook now sets admin. Confirm via `az postgres flexible-server microsoft-entra-admin list -g <rg> -s <pg>` |
 | `Easy Auth: AADSTS50011 redirect URI mismatch` | App reg redirect URI not patched yet, or env name changed | Re-run postprovision hook, or PATCH manually: `az ad app update --id $AAD_APP_CLIENT_ID --web-redirect-uris https://$WEB_APP_FQDN/.auth/login/aad/callback` |
 | Worker job never picks up messages | UAMI missing `Azure Service Bus Data Owner`, or `AZURE_CLIENT_ID` not set on the job | Check role assignment on the namespace, and `az containerapp job show ... env`. Bicep wires both — likely a stale env from a pre-refactor deploy |
+| New revision Unhealthy, logs show `credentials for '(not available)' are not valid` | Code path constructing `PrismaClient` without the `PrismaPg` driver adapter — the async Entra token function never runs | Mirror the pattern in [start.js](../start.js) / [prisma/seed.js](../prisma/seed.js) — build a `Pool` with `password: async () => credential.getToken(...)`, wrap with `new PrismaPg(pool)`, pass `{ adapter }` to `PrismaClient` |
 | `npm run dev` works, ACA returns 500 on `/projects` | DB env var built locally with password, not Entra token | Make sure `.env` on local sets `DEV_AUTH_BYPASS_OID`; in ACA the `DATABASE_URL` is password-less and `db.ts` injects tokens |
 
 ---
@@ -165,5 +182,6 @@ azd down --purge --force
 
 - [azure-architecture.md](azure-architecture.md) — what `azd up` actually creates
 - [architecture.md](architecture.md) — what runs inside the containers
+- [upgrade-plan.md](upgrade-plan.md) — sequenced plan to roll forward to Next 16 / React 19 / Prisma 7
 - [azure.yaml](../azure.yaml) — hook source of truth
 - [infra/main.bicep](../infra/main.bicep) + [infra/resources.bicep](../infra/resources.bicep) — IaC source of truth

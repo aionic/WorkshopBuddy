@@ -1,7 +1,34 @@
+# Build artifacts
 node_modules
 .next
+out
+dist
+
+# VCS / IDE
 .git
-Dockerfile
-docker-compose.yml
+.gitignore
+.vscode
+.idea
+
+# Local env / data
 .env
+.env.*
+!.env.example
 data/*.db
+*.log
+
+# Docker / compose (not needed inside the image)
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# azd state
+.azure
+
+# Tactical temp files written by deploy scripts (prevents `tar: write too long`)
+scripts/utils/_temp_*
+
+# Docs & samples (kept out of the container)
+docs
+*.md
+!README.md
