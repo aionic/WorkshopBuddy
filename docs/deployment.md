@@ -31,10 +31,10 @@ Permissions on the target subscription:
 
 | Mode | When to use | How |
 | --- | --- | --- |
-| **Local Docker** (default) | Dev workstations with Docker Desktop running | `azd deploy` (no extra config) |
-| **ACR remote build** | CI runners, machines without Docker, low-bandwidth links where uploading a built image is slower than uploading source | Edit [azure.yaml](../azure.yaml) → `services.web.docker.remoteBuild: true`, commit, `azd deploy` |
+| **Local Docker** (default) | Dev workstations with Docker Desktop running | `azd deploy` **or** `pwsh scripts/deploy.ps1` |
+| **ACR remote build** | CI runners, machines without Docker, low-bandwidth links where uploading a built image is slower than uploading source | `pwsh scripts/deploy.ps1 -Remote` (toggles `azure.yaml`, runs `azd deploy`, restores) |
 
-The toggle lives in [azure.yaml](../azure.yaml). Switching modes does not require a re-provision — only the build step changes.
+The canonical value in [azure.yaml](../azure.yaml) is `remoteBuild: false`. The `scripts/deploy.ps1 -Remote` flag flips it in place for the deploy and restores it afterward, so the repo state stays clean. azd 1.24.x does not interpolate env vars into the `remoteBuild` field, so a wrapper is required. Switching modes does not require a re-provision — only the build step changes.
 
 > Why not always remote build? The shared ACR build agent on Windows-originated `azd deploy` runs `az acr build` under the hood, which streams colorama-coloured Next.js output through the Windows cp1252 console and crashes on `▲` / `✔` glyphs. We pass `--no-logs` in CI to dodge this; local Docker side-steps it entirely.
 
